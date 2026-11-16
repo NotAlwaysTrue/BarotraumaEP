@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           dotnet publish "Barotrauma/Barotrauma${{ matrix.component }}/${{ matrix.platform.project }}${{ matrix.component }}.csproj" \
-            --configuration Release --runtime "${{ matrix.platform.runtime }}" \
+            --configuration "${{ github.event_name == 'workflow_dispatch' && 'Debug' || 'Release' }}" --runtime "${{ matrix.platform.runtime }}" \
             --self-contained -p:Platform=x64 --output "$RUNNER_TEMP/publish"
 
       - name: Package
