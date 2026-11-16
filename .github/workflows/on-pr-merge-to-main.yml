@@ -58,9 +58,17 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ github.event_name == 'workflow_dispatch' && 'debug' || 'release' }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      - name: Check out build commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+
       - name: Download packages
         uses: actions/download-artifact@v4
         with:
@@ -78,18 +86,20 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            tag="test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-            title="Manual test build"
+            tag="Debug"
             description="Manual test build of commit ${BUILD_SHA}."
-            release_options=(--prerelease)
+            prerelease=true
           else
-            tag="pr-${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-            title="Build for PR #${PR_NUMBER}"
+            tag="Release"
             description="Automated build of merge commit ${BUILD_SHA} from PR #${PR_NUMBER}."
-            release_options=()
+            prerelease=false
           fi
-          gh release create "$tag" packages/*.tar.gz \
-            --target "$BUILD_SHA" \
-            --title "$title" \
-            --notes "$description BarotraumaEP is a modified version of Barotrauma; the original game and its assets belong to their respective owners." \
-            "${release_options[@]}"
+          notes="$description BarotraumaEP is a modified version of Barotrauma; the original game and its assets belong to their respective owners."
+          git tag -f "$tag" "$BUILD_SHA"
+          git push origin "refs/tags/$tag" --force
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" packages/*.tar.gz --clobber
+            gh release edit "$tag" --title "$tag" --notes "$notes" --prerelease="$prerelease"
+          else
+            gh release create "$tag" packages/*.tar.gz --title "$tag" --notes "$notes" --prerelease="$prerelease"
+          fi
