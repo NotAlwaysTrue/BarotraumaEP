@@ -1,0 +1,104 @@
+name: BuildNightly
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-nightly
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Resolve Dev commit
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: echo "sha=$(gh api "repos/$GH_REPO/commits/Dev" --jq .sha)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: windows, project: Windows, runtime: win-x64 }
+          - { name: linux, project: Linux, runtime: linux-x64 }
+          - { name: macos, project: Mac, runtime: osx-x64 }
+        component: [Client, Server]
+    steps:
+      - name: Check out Dev commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          submodules: recursive
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish
+        shell: bash
+        run: |
+          dotnet publish "Barotrauma/Barotrauma${{ matrix.component }}/${{ matrix.platform.project }}${{ matrix.component }}.csproj" \
+            --configuration Release --runtime "${{ matrix.platform.runtime }}" \
+            --self-contained -p:Platform=x64 --output "$RUNNER_TEMP/publish"
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/packages"
+          name="BarotraumaEP-${{ matrix.platform.name }}-${{ matrix.component }}-x64"
+          tar -czf "$RUNNER_TEMP/packages/$name.tar.gz" -C "$RUNNER_TEMP/publish" .
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BarotraumaEP-${{ matrix.platform.name }}-${{ matrix.component }}-x64
+          path: ${{ runner.temp }}/packages/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out Dev commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Update nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_SHA: ${{ needs.resolve.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -f Nightly "$BUILD_SHA"
+          git push origin refs/tags/Nightly --force
+          notes="Manual build of Dev commit ${BUILD_SHA}. BarotraumaEP is a modified version of Barotrauma; the original game and its assets belong to their respective owners."
+          if gh release view Nightly > /dev/null 2>&1; then
+            gh release upload Nightly packages/*.tar.gz --clobber
+            gh release edit Nightly --title Nightly --notes "$notes" --prerelease
+          else
+            gh release create Nightly packages/*.tar.gz --title Nightly --notes "$notes" --prerelease
+          fi

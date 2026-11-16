@@ -1,0 +1,82 @@
+name: OnPRMergetoMain
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: windows, project: Windows, runtime: win-x64 }
+          - { name: linux, project: Linux, runtime: linux-x64 }
+          - { name: macos, project: Mac, runtime: osx-x64 }
+        component: [Client, Server]
+    steps:
+      - name: Check out merged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          submodules: recursive
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish
+        shell: bash
+        run: |
+          dotnet publish "Barotrauma/Barotrauma${{ matrix.component }}/${{ matrix.platform.project }}${{ matrix.component }}.csproj" \
+            --configuration Release --runtime "${{ matrix.platform.runtime }}" \
+            --self-contained -p:Platform=x64 --output "$RUNNER_TEMP/publish"
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/packages"
+          name="BarotraumaEP-${{ matrix.platform.name }}-${{ matrix.component }}-x64"
+          tar -czf "$RUNNER_TEMP/packages/$name.tar.gz" -C "$RUNNER_TEMP/publish" .
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BarotraumaEP-${{ matrix.platform.name }}-${{ matrix.component }}-x64
+          path: ${{ runner.temp }}/packages/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="pr-${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" packages/*.tar.gz \
+            --target "$MERGE_SHA" \
+            --title "Build for PR #${PR_NUMBER}" \
+            --notes "Automated build of merge commit ${MERGE_SHA} from PR #${PR_NUMBER}. BarotraumaEP is a modified version of Barotrauma; the original game and its assets belong to their respective owners."
