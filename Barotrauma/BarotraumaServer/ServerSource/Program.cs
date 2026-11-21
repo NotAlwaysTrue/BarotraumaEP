@@ -77,7 +77,13 @@ namespace Barotrauma
             }
 
             string executableDir = Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location);
-            Directory.SetCurrentDirectory(executableDir);
+            // Workshop deployments carry the marker file used by LuaCsForBarotrauma and
+            // must keep the launcher's working directory, which is the installed game
+            // directory. Standard deployments keep switching to the executable directory.
+            if (!File.Exists(Path.Combine(executableDir, "workshop")))
+            {
+                Directory.SetCurrentDirectory(executableDir);
+            }
             DebugConsoleCore.Init(
                 newMessage: (s, c) => DebugConsole.NewMessage(s, c),
                 log: DebugConsole.Log);

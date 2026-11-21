@@ -11,95 +11,34 @@ permissions:
 
 jobs:
   build:
+    name: Build
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - { name: windows, project: Windows, runtime: win-x64 }
-          - { name: linux, project: Linux, runtime: linux-x64 }
-          - { name: macos, project: Mac, runtime: osx-x64 }
-        component: [Client, Server]
-    steps:
-      - name: Check out build commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
-          submodules: recursive
+    uses: ./.github/workflows/build.yml
+    with:
+      target: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+      configuration: ${{ github.event_name == 'workflow_dispatch' && 'Debug' || 'Release' }}
 
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-
-      - name: Publish
-        shell: bash
-        run: |
-          dotnet publish "Barotrauma/Barotrauma${{ matrix.component }}/${{ matrix.platform.project }}${{ matrix.component }}.csproj" \
-            --configuration "${{ github.event_name == 'workflow_dispatch' && 'Debug' || 'Release' }}" --runtime "${{ matrix.platform.runtime }}" \
-            --self-contained -p:Platform=x64 --output "$RUNNER_TEMP/publish"
-
-      - name: Package
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/packages"
-          name="BarotraumaEP-${{ matrix.platform.name }}-${{ matrix.component }}-x64"
-          tar -czf "$RUNNER_TEMP/packages/$name.tar.gz" -C "$RUNNER_TEMP/publish" .
-
-      - name: Upload package
-        uses: actions/upload-artifact@v4
-        with:
-          name: BarotraumaEP-${{ matrix.platform.name }}-${{ matrix.component }}-x64
-          path: ${{ runner.temp }}/packages/*.tar.gz
-          if-no-files-found: error
+  package:
+    name: Package
+    needs: build
+    uses: ./.github/workflows/package.yml
+    with:
+      target: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+      configuration: ${{ github.event_name == 'workflow_dispatch' && 'Debug' || 'Release' }}
+      include-workshop: ${{ github.event_name == 'pull_request' && github.event.pull_request.merged == true }}
 
   release:
-    needs: build
-    runs-on: ubuntu-latest
+    name: Release
+    needs: package
     concurrency:
       group: release-${{ github.event_name == 'workflow_dispatch' && 'debug' || 'release' }}
       cancel-in-progress: false
     permissions:
       contents: write
-    steps:
-      - name: Check out build commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
-
-      - name: Download packages
-        uses: actions/download-artifact@v4
-        with:
-          path: packages
-          merge-multiple: true
-
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          BUILD_SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          EVENT_NAME: ${{ github.event_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            tag="Debug"
-            description="Manual test build of commit ${BUILD_SHA}."
-            prerelease=true
-          else
-            tag="Release"
-            description="Automated build of merge commit ${BUILD_SHA} from PR #${PR_NUMBER}."
-            prerelease=false
-          fi
-          notes="$description BarotraumaEP is a modified version of Barotrauma; the original game and its assets belong to their respective owners."
-          git tag -f "$tag" "$BUILD_SHA"
-          git push origin "refs/tags/$tag" --force
-          if gh release view "$tag" > /dev/null 2>&1; then
-            gh release upload "$tag" packages/*.tar.gz --clobber
-            gh release edit "$tag" --title "$tag" --notes "$notes" --prerelease="$prerelease"
-          else
-            gh release create "$tag" packages/*.tar.gz --title "$tag" --notes "$notes" --prerelease="$prerelease"
-          fi
+    uses: ./.github/workflows/release.yml
+    with:
+      target: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+      tag: ${{ github.event_name == 'workflow_dispatch' && 'Debug' || 'Release' }}
+      prerelease: ${{ github.event_name == 'workflow_dispatch' }}
+      description: >-
+        ${{ github.event_name == 'workflow_dispatch' && format('Manual test build of commit {0}.', github.sha) || format('Automated build of merge commit {0} from PR #{1}.', github.event.pull_request.merge_commit_sha, github.event.pull_request.number) }}

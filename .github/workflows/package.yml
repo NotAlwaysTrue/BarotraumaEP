@@ -1,0 +1,72 @@
+name: Package
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: Commit containing the matching packaging script
+        required: true
+        type: string
+      configuration:
+        description: Configuration of the build artifacts to package
+        required: true
+        type: string
+      include-workshop:
+        description: Also generate a Server Workshop package for a Release build
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package (${{ inputs.configuration }}, ${{ matrix.platform }}, ${{ matrix.component }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows, linux, macos]
+        component: [Client, Server]
+    steps:
+      - name: Check out packaging script
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target }}
+
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ inputs.configuration }}-${{ matrix.platform }}-${{ matrix.component }}-x64
+          path: ${{ runner.temp }}/publish
+
+      - name: Package overlay patch
+        env:
+          BUILD_CONFIGURATION: ${{ inputs.configuration }}
+          INCLUDE_WORKSHOP: ${{ inputs.include-workshop }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [[ "$BUILD_CONFIGURATION" == Debug ]]; then
+            suffix="_debug"
+          fi
+          if [[ "$INCLUDE_WORKSHOP" == true && "$BUILD_CONFIGURATION" != Release ]]; then
+            echo "::error::Workshop packages require the Release configuration."
+            exit 1
+          fi
+          name="BarotraumaEP-${{ matrix.platform }}-${{ matrix.component }}-x64$suffix"
+          bash .github/scripts/package-patch.sh "$RUNNER_TEMP/publish" \
+            "${{ matrix.platform }}" "${{ matrix.component }}" "$RUNNER_TEMP/packages/$name.tar.gz"
+          if [[ "$INCLUDE_WORKSHOP" == true && "${{ matrix.component }}" == Server ]]; then
+            bash .github/scripts/package-patch.sh "$RUNNER_TEMP/publish" \
+              "${{ matrix.platform }}" "${{ matrix.component }}" "$RUNNER_TEMP/packages/${name}_workshop.tar.gz" workshop
+          fi
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BarotraumaEP-${{ matrix.platform }}-${{ matrix.component }}-x64${{ inputs.configuration == 'Debug' && '_debug' || '' }}
+          path: ${{ runner.temp }}/packages/*.tar.gz
+          if-no-files-found: error
