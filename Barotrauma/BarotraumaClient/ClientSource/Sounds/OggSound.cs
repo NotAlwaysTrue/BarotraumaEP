@@ -1,8 +1,7 @@
-﻿using NVorbis;
+using NVorbis;
 using OpenAL;
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 
 namespace Barotrauma.Sounds
 {
@@ -38,10 +37,9 @@ namespace Barotrauma.Sounds
             Loading = true;
             TaskPool.Add(
                 $"LoadSamples {filename}",
-                LoadSamples(reader),
+                ThreadManager.Instance.Process.RunBackgroundValue("Ogg decode", _ => LoadSamples(reader)),
                 t =>
                 {
-                    reader.Dispose();
                     if (!t.TryGetResult(out TaskResult result))
                     {
                         return;
@@ -60,8 +58,9 @@ namespace Barotrauma.Sounds
             short[] MuffleBuffer,
             List<float> PlaybackAmplitude);
 
-        private static async Task<TaskResult> LoadSamples(VorbisReader reader)
+        private static TaskResult LoadSamples(VorbisReader decoder)
         {
+            using var reader = decoder;
             reader.DecodedPosition = 0;
 
             int bufferSize = (int)reader.TotalSamples * reader.Channels;
@@ -70,7 +69,7 @@ namespace Barotrauma.Sounds
             var sampleBuffer = new short[bufferSize];
             var muffledBuffer = new short[bufferSize];
 
-            int readSamples = await Task.Run(() =>  reader.ReadSamples(floatBuffer, 0, bufferSize));
+            int readSamples = reader.ReadSamples(floatBuffer, 0, bufferSize);
 
             var playbackAmplitude = new List<float>();
             for (int i = 0; i < bufferSize; i += reader.Channels * AMPLITUDE_SAMPLE_COUNT)

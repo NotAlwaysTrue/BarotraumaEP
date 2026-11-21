@@ -1,4 +1,4 @@
-﻿using Barotrauma.Sounds;
+using Barotrauma.Sounds;
 using Concentus.Structs;
 using Microsoft.Xna.Framework;
 using OpenAL;
@@ -21,9 +21,9 @@ namespace Barotrauma.Networking
 
         private readonly IntPtr captureDevice;
 
-        private Thread captureThread;
+        private ThreadManager.WorkScope captureWork;
 
-        private bool capturing;
+        private volatile bool capturing;
 
         private readonly OpusEncoder encoder;
 
@@ -150,12 +150,8 @@ namespace Barotrauma.Networking
             }
 
             capturing = true;
-            captureThread = new Thread(UpdateCapture)
-            {
-                IsBackground = true,
-                Name = "VoipCapture"
-            };
-            captureThread.Start();
+            captureWork = ThreadManager.Instance.CreateScope("Voice capture");
+            captureWork.StartThread("VoipCapture", UpdateCapture);
         }
 
         public static void ChangeCaptureDevice(string deviceName)
@@ -178,14 +174,14 @@ namespace Barotrauma.Networking
         bool prevCaptured = true;
         int captureTimer;
 
-        private void UpdateCapture()
+        private void UpdateCapture(CancellationToken stopping)
         {
             Array.Copy(uncompressedBuffer, 0, prevUncompressedBuffer, 0, VoipConfig.BUFFER_SIZE);
             Array.Clear(uncompressedBuffer, 0, VoipConfig.BUFFER_SIZE);
             nativeBuffer = Marshal.AllocHGlobal(VoipConfig.BUFFER_SIZE * 2);
             try
             {
-                while (capturing)
+                while (capturing && !stopping.IsCancellationRequested)
                 {
                     int alcError;
 
@@ -398,8 +394,8 @@ namespace Barotrauma.Networking
         {
             Instance = null;
             capturing = false;
-            captureThread?.Join();
-            captureThread = null;
+            captureWork?.Dispose();
+            captureWork = null;
             if (captureDevice != IntPtr.Zero) { Alc.CaptureCloseDevice(captureDevice); }
         }
         

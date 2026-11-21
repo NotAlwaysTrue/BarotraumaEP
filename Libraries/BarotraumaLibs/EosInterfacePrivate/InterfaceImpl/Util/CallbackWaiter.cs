@@ -1,6 +1,7 @@
-﻿#nullable enable
+#nullable enable
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Barotrauma;
 
@@ -24,7 +25,8 @@ internal class CallbackWaiter<T> where T : notnull
         this.timeout = DateTime.Now + (timeout == default
             ? TimeSpan.FromSeconds(60)
             : timeout);
-        this.Task = System.Threading.Tasks.Task.Run(RunTask);
+        this.Task = ThreadManager.Current?.Process.RunBackground("EOS callback wait", RunTask)
+            ?? RunTask(CancellationToken.None);
     }
 
     public void OnCompletion(ref T result)
@@ -35,9 +37,9 @@ internal class CallbackWaiter<T> where T : notnull
         }
     }
 
-    private async Task<Option<T>> RunTask()
+    private async Task<Option<T>> RunTask(CancellationToken stopping)
     {
-        while (DateTime.Now < timeout)
+        while (!stopping.IsCancellationRequested && DateTime.Now < timeout)
         {
             lock (mutex)
             {

@@ -1,4 +1,4 @@
-﻿using Barotrauma.IO;
+using Barotrauma.IO;
 using Barotrauma.Media;
 using Barotrauma.Networking;
 using Barotrauma.Particles;
@@ -113,7 +113,7 @@ namespace Barotrauma
         public static LoadingScreen TitleScreen;
         private bool loadingScreenOpen;
 
-        private Thread initialLoadingThread;
+        private ThreadManager.WorkScope initialLoading;
 
         public bool HasLoaded { get; private set; }
 
@@ -471,14 +471,26 @@ namespace Barotrauma
 
             Eos.EosAccount.LoginPlatformSpecific();
 
-            initialLoadingThread = new Thread(Load)
-            {
-                Name = "Load"
-            };
-            initialLoadingThread.Start();
+            initialLoading = ThreadManager.Instance.CreateScope("Initial loading");
+            initialLoading.StartThread("Load", Load, background: false);
         }
 
-        private void Load()
+        internal void StopInitialLoading()
+        {
+            var work = initialLoading;
+            initialLoading = null;
+            work?.Dispose();
+        }
+
+        internal void StopBackgroundWork()
+        {
+            IsExiting = true;
+            StopInitialLoading();
+            TextureLoader.CancelAll();
+            ThreadManager.Current?.Shutdown(EosInterface.Core.Update);
+        }
+
+        private void Load(CancellationToken stopping)
         {
             static void log(string str)
             {
@@ -498,7 +510,10 @@ namespace Barotrauma
                 TitleScreen.AvailableLanguages = TextManager.AvailableLanguages.OrderBy(l => l.Value != "english".ToIdentifier()).ThenBy(l => l.Value).ToArray();
                 while (TitleScreen.WaitForLanguageSelection)
                 {
-                    Thread.Sleep((int)(Timing.Step * 1000));
+                    if (stopping.WaitHandle.WaitOne((int)(Timing.Step * 1000)))
+                    {
+                        return;
+                    }
                 }
                 LanguageIdentifier selectedLanguage = GameSettings.CurrentConfig.Language;
                 //unload text files at this point - we only loaded for the purposes of the language selection screen,
@@ -511,6 +526,7 @@ namespace Barotrauma
                 GameSettings.SaveCurrentConfig();
             }
 
+            stopping.ThrowIfCancellationRequested();
             SoundManager = new Sounds.SoundManager();
             SoundManager.ApplySettings();
 
@@ -531,10 +547,10 @@ namespace Barotrauma
                          .Select(p => p.Result).Successes())
             {
                 const float min = 1f, max = 70f;
-                if (IsExiting) { break; }
+                if (IsExiting || stopping.IsCancellationRequested) { break; }
                 TitleScreen.LoadState = MathHelper.Lerp(min, max, progress);
             }
-            if (IsExiting) { return; }
+            if (IsExiting || stopping.IsCancellationRequested) { return; }
 
             var corePackage = ContentPackageManager.EnabledPackages.Core;
             if (corePackage.EnableError.TryUnwrap(out var error))
@@ -684,7 +700,7 @@ namespace Barotrauma
         /// </summary>
         protected override void UnloadContent()
         {
-            TextureLoader.CancelAll();
+            StopBackgroundWork();
             CoroutineManager.StopCoroutines("Load");
             Video.Close();
             VoipCapture.Instance?.Dispose();
@@ -1294,9 +1310,11 @@ namespace Barotrauma
         protected override void OnExiting(object sender, EventArgs args)
         {
             IsExiting = true;
+            StopInitialLoading();
             CreatureMetrics.Save();
             DebugConsole.NewMessage("Exiting...");
             Client?.Quit();
+            StopBackgroundWork();
             SteamManager.ShutDown();
 
             try

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -27,7 +27,8 @@ namespace Barotrauma.Networking
             Crash = 0xFF
         }
 
-        private static ManualResetEvent writeManualResetEvent;
+        private static readonly object writerSignalLock = new object();
+        private static AutoResetEvent writerSignal;
 
         private enum StatusEnum
         {
@@ -50,8 +51,8 @@ namespace Barotrauma.Networking
 
         private static ConcurrentQueue<byte[]> msgsToRead;
 
-        private static Thread readThread;
-        private static Thread writeThread;
+        private static ThreadManager.WorkScope pipeWork;
+        private static CancellationTokenRegistration stopPipeIo;
 
         private static CancellationTokenSource readCancellationToken;
 
@@ -71,46 +72,67 @@ namespace Barotrauma.Networking
 
             readCancellationToken = new CancellationTokenSource();
 
-            writeManualResetEvent = new ManualResetEvent(false);
+            lock (writerSignalLock)
+            {
+                writerSignal = new AutoResetEvent(false);
+            }
 
-            readThread = new Thread(UpdateRead)
+            pipeWork = ThreadManager.Instance.CreateScope("Child server relay");
+            stopPipeIo = pipeWork.Stopping.Register(() =>
             {
-                Name = "ChildServerRelay.ReadThread",
-                IsBackground = true
-            };
-            writeThread = new Thread(UpdateWrite)
+                status = StatusEnum.ShutDown;
+                WakeWriter();
+                readCancellationToken.Cancel();
+                readStream?.Dispose();
+                writeStream?.Dispose();
+            });
+            try
             {
-                Name = "ChildServerRelay.WriteThread",
-                IsBackground = true
-            };
-            readThread.Start();
-            writeThread.Start();
+                pipeWork.StartThread("ChildServerRelay.ReadThread", _ => UpdateRead());
+                pipeWork.StartThread("ChildServerRelay.WriteThread", _ => UpdateWrite());
+            }
+            catch
+            {
+                PrivateShutDown();
+                throw;
+            }
         }
 
         private static void PrivateShutDown()
         {
-            if (Thread.CurrentThread != GameMain.MainThread)
+            if (Thread.CurrentThread != ThreadManager.Instance.MainThread)
             {
                 throw new InvalidOperationException(
                     $"Cannot call {nameof(ChildServerRelay)}.{nameof(PrivateShutDown)} from a thread other than the main one");
             }
-            if (status is StatusEnum.NeverStarted) { return; }
-            status = StatusEnum.ShutDown;
-            writeManualResetEvent?.Set();
-            readCancellationToken?.Cancel();
-            readThread?.Join(); readThread = null;
-            writeThread?.Join(); writeThread = null;
+            if (pipeWork == null) { return; }
+            pipeWork.Dispose();
+            pipeWork = null;
+            stopPipeIo.Dispose();
+            lock (writerSignalLock)
+            {
+                writerSignal.Dispose();
+                writerSignal = null;
+            }
             readCancellationToken?.Dispose();
             readCancellationToken = null;
-            readStream?.Dispose(); readStream = null;
-            writeStream?.Dispose(); writeStream = null;
+            readStream = null;
+            writeStream = null;
             msgsToRead?.Clear(); msgsToWrite?.Clear();
         }
 
 
         private static Option<int> ReadIncomingMsgs()
         {
-            Task<int> readTask = readStream?.ReadAsync(readTempBytes, 0, readTempBytes.Length, readCancellationToken.Token);
+            Task<int> readTask;
+            try
+            {
+                readTask = readStream?.ReadAsync(readTempBytes, 0, readTempBytes.Length, readCancellationToken.Token);
+            }
+            catch (Exception error) when (HasShutDown && error is ObjectDisposedException or System.IO.IOException or OperationCanceledException)
+            {
+                return Option<int>.None();
+            }
             if (readTask is null) { return Option<int>.None(); }
 
             int timeOutMilliseconds = 150;
@@ -132,6 +154,10 @@ namespace Barotrauma.Networking
                 catch (AggregateException aggregateException)
                 {
                     if (aggregateException.InnerException is OperationCanceledException) { return Option<int>.None(); }
+                    if (HasShutDown && aggregateException.InnerException is ObjectDisposedException or System.IO.IOException)
+                    {
+                        return Option<int>.None();
+                    }
                     CheckPipeConnected(nameof(readStream), readStream);
                     throw;
                 }
@@ -302,8 +328,7 @@ namespace Barotrauma.Networking
                 
                 if (!HasShutDown)
                 {
-                    writeManualResetEvent.Reset();
-                    if (!writeManualResetEvent.WaitOne(1000))
+                    if (!writerSignal.WaitOne(1000))
                     {
                         if (HasShutDown) { return; }
 
@@ -325,7 +350,15 @@ namespace Barotrauma.Networking
                 return;
             }
             msgsToWrite.Enqueue(msg);
-            writeManualResetEvent.Set();
+            WakeWriter();
+        }
+
+        private static void WakeWriter()
+        {
+            lock (writerSignalLock)
+            {
+                writerSignal?.Set();
+            }
         }
 
         private static readonly Stopwatch stopwatch = new Stopwatch();

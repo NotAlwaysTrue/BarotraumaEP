@@ -24,15 +24,12 @@ namespace Barotrauma
         private string errorMessage;
         private long committedLength;
 
-        // TEMPORARY: expose the writer task until HTTP recording uses ThreadManager.WorkScope again.
-        public Task Completion { get; }
-
-        public ServerPerformanceRecording(string directory, CancellationToken stopping, TimeProvider timeProvider = null)
+        public ServerPerformanceRecording(string directory, ThreadManager.WorkScope work, TimeProvider timeProvider = null)
         {
             this.directory = directory;
             string startedAt = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
             archivePath = Path.Combine(directory, $"performance-{startedAt}-{Guid.NewGuid():N}.csv");
-            Completion = WriteSamplesAsync(timeProvider ?? TimeProvider.System, stopping);
+            _ = work.RunBackground("Write performance recording", stopping => WriteSamplesAsync(timeProvider ?? TimeProvider.System, stopping));
         }
 
         public State GetState()

@@ -1,4 +1,4 @@
-﻿#region Using Statements
+#region Using Statements
 
 using System;
 using Barotrauma.IO;
@@ -38,6 +38,7 @@ namespace Barotrauma
         [STAThread]
         static void Main(string[] args)
         {
+            using var threadManager = ThreadManager.Initialize();
             string executableDir = "";
 
 #if !DEBUG
@@ -58,11 +59,22 @@ namespace Barotrauma
             StoreIntegration.Init(ref args);
             EnableNvOptimus();
             Game = new GameMain(args);
-            Game.Run();
-            Game.Dispose();
-            FreeNvOptimus();
-
-            CrossThread.ProcessTasks();
+            try
+            {
+                Game.Run();
+            }
+            finally
+            {
+                try
+                {
+                    Game.StopBackgroundWork();
+                }
+                finally
+                {
+                    Game.Dispose();
+                    FreeNvOptimus();
+                }
+            }
         }
 
         private static GameMain Game;

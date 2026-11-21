@@ -1,4 +1,4 @@
-﻿using Barotrauma.Extensions;
+using Barotrauma.Extensions;
 using Barotrauma.Networking;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -304,9 +304,11 @@ namespace Barotrauma
 
             GUI.ClearCursorWait();
 
-            startRoundCancellationToken = new CancellationTokenSource();
-            var loadTask = Task.Run(async () =>
+            var roundCancellation = new CancellationTokenSource();
+            startRoundCancellationToken = roundCancellation;
+            var loadTask = ThreadManager.Instance.Process.RunBackground("Campaign round load", async stopping =>
             {
+                using var registration = stopping.Register(roundCancellation.Cancel);
                 await Task.Yield();
                 Rand.ThreadId = Environment.CurrentManagedThreadId;
                 try
@@ -319,7 +321,7 @@ namespace Barotrauma
                 }
                 Rand.ThreadId = 0;
                 startRoundCancellationToken = null;
-            }, startRoundCancellationToken.Token);
+            }, roundCancellation.Token);
             TaskPool.Add("AsyncCampaignStartRound", loadTask, (t) =>
             {
                 overlayColor = Color.Transparent;

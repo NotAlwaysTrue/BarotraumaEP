@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -595,11 +595,18 @@ namespace Barotrauma
             if (hash != null) { return; }
             if (hashTask != null) { return; }
 
-            hashTask = new Task(() =>
+            void CalculateHash()
+                => hash = Md5Hash.CalculateForString(doc.ToString(), Md5Hash.StringHashOptions.IgnoreWhitespace);
+
+            if (ThreadManager.Current is { } manager)
             {
-                hash = Md5Hash.CalculateForString(doc.ToString(), Md5Hash.StringHashOptions.IgnoreWhitespace);
-            });
-            hashTask.Start();
+                hashTask = manager.Process.RunBackgroundAction("Submarine document hash", _ => CalculateHash());
+            }
+            else
+            {
+                CalculateHash();
+                hashTask = Task.CompletedTask;
+            }
         }
 
         public bool HasTag(SubmarineTag tag)

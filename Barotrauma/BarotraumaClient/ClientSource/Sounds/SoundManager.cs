@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading;
 using System.Collections.Generic;
 using System.Xml.Linq;
@@ -44,7 +44,9 @@ namespace Barotrauma.Sounds
 
         public bool Disconnected { get; private set; }
 
-        private Thread updateChannelsThread;
+        private volatile ThreadManager.WorkScope channelWork;
+        private AutoResetEvent channelWake;
+        private bool canStartChannelWork;
 
         private Vector3 listenerPosition;
         public Vector3 ListenerPosition
@@ -206,7 +208,6 @@ namespace Barotrauma.Sounds
         public SoundManager()
         {
             loadedSounds = new List<Sound>();
-            updateChannelsThread = null;
 
             sourcePools = new SoundSourcePool[2];
             playingChannels[(int)SourcePoolIndex.Default] = new SoundChannel[SourceCount];
@@ -345,6 +346,10 @@ namespace Barotrauma.Sounds
             ReloadSounds();
 
             Disabled = false;
+            lock (threadDeathMutex)
+            {
+                canStartChannelWork = true;
+            }
 
             return true;
         }
@@ -706,7 +711,7 @@ namespace Barotrauma.Sounds
                 CompressionDynamicRangeGain = 1.0f;
             }
 
-            if (updateChannelsThread == null || updateChannelsThread.ThreadState.HasFlag(ThreadState.Stopped))
+            if (channelWork == null)
             {
                 bool startedStreamThread = false;
                 for (int i = 0; i < playingChannels.Length; i++)
@@ -743,41 +748,39 @@ namespace Barotrauma.Sounds
         /// </summary>
         public void InitUpdateChannelThread()
         {
-            if (Disabled) { return; }
-            bool isUpdateChannelsThreadDying;
             lock (threadDeathMutex)
             {
-                isUpdateChannelsThreadDying = !needsUpdateChannels;
-            }
-            if (updateChannelsThread == null || updateChannelsThread.ThreadState.HasFlag(ThreadState.Stopped) || isUpdateChannelsThreadDying)
-            {
-                if (updateChannelsThread != null && !updateChannelsThread.Join(1000))
+                if (!canStartChannelWork || GameMain.IsExiting) { return; }
+                if (channelWork == null)
                 {
-                    DebugConsole.ThrowError("SoundManager.UpdateChannels thread join timed out!");
+                    var work = ThreadManager.Instance.CreateScope("Audio channels");
+                    var wake = new AutoResetEvent(false);
+                    try
+                    {
+                        work.StartThread("SoundManager.UpdateChannels", stopping => UpdateChannels(stopping, wake));
+                    }
+                    catch
+                    {
+                        wake.Dispose();
+                        work.Dispose();
+                        throw;
+                    }
+                    channelWake = wake;
+                    channelWork = work;
                 }
-                needsUpdateChannels = true;
-                updateChannelsThread = new Thread(UpdateChannels)
-                {
-                    Name = "SoundManager.UpdateChannels Thread",
-                    IsBackground = true //this should kill the thread if the game crashes
-                };
-                updateChannelsThread.Start();
+                channelWake.Set();
             }
         }
-
-        private bool needsUpdateChannels = false;
-        private ManualResetEvent updateChannelsMre = null;
 
         /// <summary>
         /// Handles streaming audio and fading out and disposing channels that are no longer needed.
         /// </summary>
-        private void UpdateChannels()
+        private void UpdateChannels(CancellationToken stopping, AutoResetEvent wake)
         {
-            updateChannelsMre = new ManualResetEvent(false);
-            bool killThread = false;
-            while (!killThread)
+            var signals = new WaitHandle[] { wake, stopping.WaitHandle };
+            while (!stopping.IsCancellationRequested)
             {
-                killThread = true;
+                bool hasActiveChannels = false;
                 for (int sourcePoolIndex = 0; sourcePoolIndex < playingChannels.Length; sourcePoolIndex++)
                 {
                     lock (playingChannels[sourcePoolIndex])
@@ -789,7 +792,7 @@ namespace Barotrauma.Sounds
                             if (channel == null) { continue; }
                             if (channel.FadingOutAndDisposing)
                             {
-                                killThread = false;
+                                hasActiveChannels = true;
                                 channel.Gain -= 0.1f;
                                 if (channel.Gain <= 0.0f)
                                 {
@@ -801,7 +804,7 @@ namespace Barotrauma.Sounds
                             {
                                 if (channel.IsPlaying)
                                 {
-                                    killThread = false;
+                                    hasActiveChannels = true;
                                     channel.UpdateStream();
                                 }
                                 else
@@ -813,18 +816,16 @@ namespace Barotrauma.Sounds
                         }
                     }
                 }
-                updateChannelsMre.WaitOne(10);
-                updateChannelsMre.Reset();
-                lock (threadDeathMutex)
-                {
-                    needsUpdateChannels = !killThread;
-                }
+                WaitHandle.WaitAny(signals, hasActiveChannels ? 10 : Timeout.Infinite);
             }
         }
 
         public void ForceStreamUpdate()
         {
-            updateChannelsMre?.Set();
+            lock (threadDeathMutex)
+            {
+                channelWake?.Set();
+            }
         }
 
         private void ReloadSounds()
@@ -837,6 +838,19 @@ namespace Barotrauma.Sounds
 
         private void ReleaseResources(bool keepSounds)
         {
+            ThreadManager.WorkScope work;
+            AutoResetEvent wake;
+            lock (threadDeathMutex)
+            {
+                canStartChannelWork = false;
+                work = channelWork;
+                wake = channelWake;
+                channelWork = null;
+                channelWake = null;
+            }
+            work?.Dispose();
+            wake?.Dispose();
+
             for (int i = 0; i < playingChannels.Length; i++)
             {
                 lock (playingChannels[i])
@@ -848,7 +862,6 @@ namespace Barotrauma.Sounds
                 }
             }
 
-            updateChannelsThread?.Join();
             for (int i = loadedSounds.Count - 1; i >= 0; i--)
             {
                 if (keepSounds)

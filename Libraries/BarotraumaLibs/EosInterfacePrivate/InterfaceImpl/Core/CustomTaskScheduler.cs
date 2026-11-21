@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Barotrauma;
 
 namespace EosInterfacePrivate;
 
@@ -22,23 +23,26 @@ internal sealed partial class ImplementationPrivate : Barotrauma.EosInterface.Im
 
         internal Task<T> Schedule<T>(Func<Task<T>> action)
         {
-            return
+            return TrackScheduled(() =>
                 Task.Factory.StartNew(
                     function: action,
                     cancellationToken: CancellationToken.None,
                     creationOptions: TaskCreationOptions.None,
-                    scheduler: this).Unwrap();
+                    scheduler: this).Unwrap());
         }
 
         internal Task Schedule(Func<Task> action)
         {
-            return
+            return TrackScheduled(() =>
                 Task.Factory.StartNew(
                     function: action,
                     cancellationToken: CancellationToken.None,
                     creationOptions: TaskCreationOptions.None,
-                    scheduler: this).Unwrap();
+                    scheduler: this).Unwrap());
         }
+
+        private static T TrackScheduled<T>(Func<T> start) where T : Task
+            => ThreadManager.Current?.Process.Schedule("EOS main-thread operation", start) ?? start();
 
         internal void RunOnCurrentThread()
         {

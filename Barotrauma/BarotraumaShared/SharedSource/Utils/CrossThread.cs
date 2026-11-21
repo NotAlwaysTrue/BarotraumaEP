@@ -1,5 +1,4 @@
-﻿using System.Collections.Generic;
-using System.Threading;
+using System.Collections.Generic;
 
 namespace Barotrauma
 {
@@ -7,56 +6,27 @@ namespace Barotrauma
     {
         public delegate void TaskDelegate();
 
-        private sealed class Task
-        {
-            public TaskDelegate Deleg;
-            public ManualResetEvent Mre;
-            public bool Done;
-
-            public Task(TaskDelegate d)
-            {
-                Deleg = d;
-                Mre = new ManualResetEvent(false);
-                Done = false;
-            }
-
-            public void PerformWait()
-            {
-                if (!Done) { Mre.WaitOne(); }
-            }
-        }
-        private static readonly List<Task> enqueuedTasks;
-
-        static CrossThread() { enqueuedTasks = new List<Task>(); }
-
         public static void ProcessTasks()
         {
-            lock (enqueuedTasks)
-            {
-                foreach (var task in enqueuedTasks)
-                {
-                    task.Deleg();
-                    task.Mre.Set();
-                    task.Done = true;
-                }
-                enqueuedTasks.Clear();
-            }
+            ThreadManager.Current?.ProcessMainThreadTasks();
+        }
+
+        /// <summary>Queues work for the main thread without waiting for it.</summary>
+        /// <returns>False if the main thread is not available.</returns>
+        public static bool TryPostExecutionOnMainThread(TaskDelegate deleg)
+        {
+            return ThreadManager.Current?.TryPostToMainThread(() => deleg()) == true;
         }
 
         public static void RequestExecutionOnMainThread(TaskDelegate deleg)
         {
-            if (GameMain.MainThread == null || Thread.CurrentThread == GameMain.MainThread)
+            if (ThreadManager.Current is { } manager)
             {
-                deleg();
+                manager.InvokeOnMainThread(() => deleg());
             }
             else
             {
-                Task newTask = new Task(deleg);
-                lock (enqueuedTasks)
-                {
-                    enqueuedTasks.Add(newTask);
-                }
-                newTask.PerformWait();
+                deleg();
             }
         }
 

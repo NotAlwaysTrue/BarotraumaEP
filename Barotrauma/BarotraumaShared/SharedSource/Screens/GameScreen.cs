@@ -18,6 +18,9 @@ namespace Barotrauma
     {
         private object updateLock = new object();
         private double physicsTime;
+#if RUN_PHYSICS_IN_SEPARATE_THREAD
+        private ThreadManager.WorkScope physicsWork;
+#endif
 
 #if CLIENT
         private readonly Camera cam;
@@ -70,17 +73,18 @@ namespace Barotrauma
             MapEntity.ClearHighlightedEntities();
 
 #if RUN_PHYSICS_IN_SEPARATE_THREAD
-            var physicsThread = new Thread(ExecutePhysics)
-            {
-                Name = "Physics thread",
-                IsBackground = true
-            };
-            physicsThread.Start();
+            physicsWork?.Dispose();
+            physicsWork = ThreadManager.Instance.CreateScope("Game screen physics");
+            physicsWork.StartThread("Physics thread", ExecutePhysics);
 #endif
         }
 
         public override void Deselect()
         {
+#if RUN_PHYSICS_IN_SEPARATE_THREAD
+            physicsWork?.Dispose();
+            physicsWork = null;
+#endif
             base.Deselect();
 #if CLIENT
             var config = GameSettings.CurrentConfig;
@@ -315,9 +319,9 @@ namespace Barotrauma
 
         partial void UpdateProjSpecific(double deltaTime);
 
-        private void ExecutePhysics()
+        private void ExecutePhysics(CancellationToken stopping)
         {
-            while (true)
+            while (!stopping.IsCancellationRequested)
             {
                 while (physicsTime >= Timing.Step)
                 {

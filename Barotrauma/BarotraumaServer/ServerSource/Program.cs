@@ -50,6 +50,7 @@ namespace Barotrauma
         [STAThread]
         static void Main(string[] args)
         {
+            using var threadManager = ThreadManager.Initialize();
             AppDomain currentDomain = AppDomain.CurrentDomain;
             currentDomain.ProcessExit += OnProcessExit;
 #if !DEBUG
@@ -89,8 +90,9 @@ namespace Barotrauma
             finally
             {
                 Game.StopPerformanceHttp();
+                ChildServerRelay.ShutDown();
+                ShutDown();
             }
-            ShutDown();
         }
 
         private static bool hasShutDown = false;
@@ -107,6 +109,10 @@ namespace Barotrauma
             EosInterface.Core.CleanupAndQuit();
             while (EosInterface.Core.IsInitialized)
             {
+                if (Thread.CurrentThread == ThreadManager.Current?.MainThread)
+                {
+                    CrossThread.ProcessTasks();
+                }
                 EosInterface.Core.Update();
                 TaskPool.Update();
                 Thread.Sleep(16);

@@ -1,4 +1,4 @@
-﻿using Barotrauma.Extensions;
+using Barotrauma.Extensions;
 using Barotrauma.IO;
 using Barotrauma.Items.Components;
 using Microsoft.Xna.Framework;
@@ -246,7 +246,7 @@ namespace Barotrauma
         public Task GeneratePreviewMeshes()
         {
             if (loadTask != null) { throw new InvalidOperationException("Tried to start SubmarinePreview loadTask more than once!"); }
-            loadTask = Task.Run(GeneratePreviewMeshesInternal);
+            loadTask = ThreadManager.Instance.Process.RunBackground("Submarine preview", _ => GeneratePreviewMeshesInternal());
             return loadTask;
         }
 

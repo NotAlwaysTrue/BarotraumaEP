@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Linq;
 using System.Threading;
@@ -53,7 +53,7 @@ namespace Barotrauma.Networking
         public static void AttemptGracefulShutDown(int maxAttempts = 20)
         {
             status = StatusEnum.RequestedShutDown;
-            writeManualResetEvent?.Set();
+            WakeWriter();
             int checks = 0;
             while (Process is { HasExited: false })
             {

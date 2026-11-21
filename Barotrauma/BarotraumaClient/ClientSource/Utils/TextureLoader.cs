@@ -1,6 +1,5 @@
 using Microsoft.Xna.Framework.Graphics;
 using System;
-using System.Threading.Tasks;
 using Barotrauma.IO;
 using Lidgren.Network;
 using Color = Microsoft.Xna.Framework.Color;
@@ -45,9 +44,10 @@ namespace Barotrauma
         private static byte[] CompressDxt5(byte[] data, int width, int height)
         {
             var output = new byte[width * height];
-            Parallel.For(
-                fromInclusive: 0,
-                toExclusive: width * height / 16,
+            ThreadManager.Instance.Process.RunParallel(
+                "DXT5 texture compression",
+                0,
+                width * height / 16,
                 i =>
                 {
                     int i4 = i * 4;

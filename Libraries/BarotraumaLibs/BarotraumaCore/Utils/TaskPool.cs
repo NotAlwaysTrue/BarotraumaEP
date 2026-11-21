@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -58,6 +58,7 @@ namespace Barotrauma
                         "Too many tasks in the TaskPool:\n" + string.Join('\n', taskActions.Select(ta => ta.Name))
                     );
                 }
+                ThreadManager.Current?.Process.Track(name, task);
                 taskActions.Add(new TaskAction() { Name = name, Task = task, OnCompletion = onCompletion, UserData = userdata });
             }
         }

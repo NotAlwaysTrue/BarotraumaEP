@@ -1,4 +1,4 @@
-﻿using Barotrauma.Extensions;
+using Barotrauma.Extensions;
 using Barotrauma.IO;
 using Barotrauma.Items.Components;
 using Barotrauma.Sounds;
@@ -13,7 +13,6 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.IO.Compression;
 using System.Linq;
-using System.Threading;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -1868,7 +1867,7 @@ namespace Barotrauma
 
                     XDocument doc = new XDocument(new XElement("Submarine"));
                     MainSub.SaveToXElement(doc.Root);
-                    Thread saveThread = new Thread(start =>
+                    ThreadManager.Instance.Process.RunBackgroundAction("Submarine editor autosave", _ =>
                     {
                         try
                         {
@@ -1917,8 +1916,7 @@ namespace Barotrauma
                             CrossThread.RequestExecutionOnMainThread(() => DebugConsole.ThrowError("Auto saving submarine failed!", e));
                         }
                         isAutoSaving = false;
-                    }) { Name = "Auto Save Thread" };
-                    saveThread.Start();
+                    });
                 }
             }
         }

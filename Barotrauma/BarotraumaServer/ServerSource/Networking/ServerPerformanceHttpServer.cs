@@ -38,8 +38,7 @@ namespace Barotrauma
         private const int MaxConcurrentRequests = 16;
         private readonly SemaphoreSlim requestSlots = new SemaphoreSlim(MaxConcurrentRequests);
         private readonly ConcurrentDictionary<HttpListenerContext, byte> activeRequests = new ConcurrentDictionary<HttpListenerContext, byte>();
-        // TEMPORARY: own cancellation and drain requests locally until ThreadManager.WorkScope is migrated.
-        private readonly CancellationTokenSource shutdown = new CancellationTokenSource();
+        private readonly ThreadManager.WorkScope requestWork;
         private readonly Queue<ServerPerformanceSnapshot> history = new Queue<ServerPerformanceSnapshot>(HistorySeconds);
         private byte[] snapshot;
         private string serverName;
@@ -71,6 +70,8 @@ namespace Barotrauma
                 }
                 tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(token));
             }
+            requestWork = ThreadManager.Current?.CreateScope("Performance HTTP")
+                ?? new ThreadManager.WorkScope("Performance HTTP");
             try
             {
                 if (enabled)
@@ -83,16 +84,14 @@ namespace Barotrauma
                 if (enabled)
                 {
                     recording = new ServerPerformanceRecording(recordingDirectory ??
-                        Path.Combine(AppContext.BaseDirectory, ServerPerformanceRecording.DirectoryName), shutdown.Token);
+                        Path.Combine(AppContext.BaseDirectory, ServerPerformanceRecording.DirectoryName), requestWork);
                 }
-                Completion = AcceptRequestsAsync();
+                Completion = requestWork.Schedule("HTTP accept loop", AcceptRequestsAsync);
             }
             catch
             {
                 listener.Close();
-                shutdown.Cancel();
-                recording?.Completion.GetAwaiter().GetResult();
-                shutdown.Dispose();
+                requestWork.Dispose();
                 throw;
             }
         }
@@ -244,7 +243,7 @@ namespace Barotrauma
 
         private async Task AcceptRequestsAsync()
         {
-            using var stopListener = shutdown.Token.Register(listener.Close);
+            using var stopListener = requestWork.Stopping.Register(listener.Close);
             try
             {
                 while (Volatile.Read(ref disposed) == 0)
@@ -258,12 +257,22 @@ namespace Barotrauma
                     }
                     activeRequests.TryAdd(context, 0);
                     // Even a cached page or slow response is handled away from the accept loop.
-                    _ = Task.Run(() => HandleRequestAsync(context));
+                    try
+                    {
+                        _ = requestWork.RunBackground("HTTP request", _ => HandleRequestAsync(context));
+                    }
+                    catch (ObjectDisposedException) when (requestWork.Stopping.IsCancellationRequested)
+                    {
+                        activeRequests.TryRemove(context, out _);
+                        requestSlots.Release();
+                        Abort(context.Response);
+                        return;
+                    }
                 }
             }
             catch (Exception error) when (error is HttpListenerException || error is ObjectDisposedException || error is InvalidOperationException)
             {
-                if (Volatile.Read(ref disposed) == 0 && !shutdown.Token.IsCancellationRequested)
+                if (Volatile.Read(ref disposed) == 0 && !requestWork.Stopping.IsCancellationRequested)
                 {
                     Console.Error.WriteLine("Performance HTTP listener stopped unexpectedly ({0}).", error.GetType().Name);
                 }
@@ -272,7 +281,7 @@ namespace Barotrauma
 
         private async Task HandleRequestAsync(HttpListenerContext context)
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(requestWork.Stopping);
             timeout.CancelAfter(RequestTimeout);
             using var abortOnTimeout = timeout.Token.Register(() => Abort(context.Response));
             bool shutdownAfterReply = false;
@@ -577,19 +586,12 @@ namespace Barotrauma
             {
                 return;
             }
-            shutdown.Cancel();
-            Completion.GetAwaiter().GetResult();
+            requestWork.RequestStop();
             foreach (var context in activeRequests.Keys)
             {
                 Abort(context.Response);
             }
-            // The accept loop has ended, so only existing handlers can hold slots.
-            for (int i = 0; i < MaxConcurrentRequests; i++)
-            {
-                requestSlots.Wait();
-            }
-            recording?.Completion.GetAwaiter().GetResult();
-            shutdown.Dispose();
+            requestWork.Dispose();
             listener.Close();
             requestSlots.Dispose();
         }

@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,7 +23,6 @@ namespace Barotrauma.Lights
         /// </summary>
         const float ObstructLightsBehindCharactersZoomThreshold = 0.5f;
 
-        private Thread rayCastThread;
         private Queue<RayCastTask> pendingRayCasts = new Queue<RayCastTask>();
 
         public static Entity ViewTarget { get; set; }
@@ -93,12 +92,7 @@ namespace Barotrauma.Lights
 
             AmbientLight = new Color(20, 20, 20, 255);
 
-            rayCastThread = new Thread(UpdateRayCasts)
-            {
-                Name = "LightManager Raycast thread",
-                IsBackground = true //this should kill the thread if the game crashes
-            };
-            rayCastThread.Start();
+            ThreadManager.Instance.Process.StartThread("LightManager.Raycast", UpdateRayCasts);
 
             visionCircle = Sprite.LoadTexture("Content/Lights/visioncircle.png");
             highlightRaster = Sprite.LoadTexture("Content/UI/HighlightRaster.png");
@@ -219,18 +213,18 @@ namespace Barotrauma.Lights
             }
         }
 
-        private void UpdateRayCasts()
+        private void UpdateRayCasts(CancellationToken stopping)
         {
-            while (true)
+            while (!stopping.IsCancellationRequested)
             {
                 lock (mutex)
                 {
-                    while (pendingRayCasts.Count > 0)
+                    while (pendingRayCasts.Count > 0 && !stopping.IsCancellationRequested)
                     {
                         pendingRayCasts.Dequeue().Calculate();
                     }
                 }
-                Thread.Sleep(10);
+                stopping.WaitHandle.WaitOne(10);
             }
         }
 
