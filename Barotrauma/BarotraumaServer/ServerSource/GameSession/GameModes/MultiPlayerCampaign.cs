@@ -118,33 +118,49 @@ namespace Barotrauma
             }
         }
 
-        public static void StartNewCampaign(string savePath, string subPath, string seed, CampaignSettings startingSettings)
+        public static bool StartNewCampaign(string savePath, string subPath, string seed, CampaignSettings startingSettings)
         {
-            if (string.IsNullOrWhiteSpace(savePath)) { return; }
+            if (string.IsNullOrWhiteSpace(savePath)) { return false; }
 
-            GameMain.GameSession = new GameSession(new SubmarineInfo(subPath), Option.None, CampaignDataPath.CreateRegular(savePath), GameModePreset.MultiPlayerCampaign, startingSettings, seed);
+            var previousSession = GameMain.GameSession;
+            var newSession = new GameSession(new SubmarineInfo(subPath), Option.None, CampaignDataPath.CreateRegular(savePath), GameModePreset.MultiPlayerCampaign, startingSettings, seed);
+            GameMain.GameSession = newSession;
+            try
+            {
+                SaveUtil.SaveGame(newSession.DataPath);
+                if (!SaveUtil.IsSaveFileCompatible(SaveUtil.ExtractGameSessionRootElementFromSaveFile(savePath, logLoadErrors: false)))
+                {
+                    GameMain.GameSession = previousSession;
+                    return false;
+                }
+            }
+            catch
+            {
+                GameMain.GameSession = previousSession;
+                throw;
+            }
             GameMain.NetLobbyScreen.ToggleCampaignMode(true);
-            SaveUtil.SaveGame(GameMain.GameSession.DataPath);
 
             DebugConsole.NewMessage("Campaign started!", Color.Cyan);
             DebugConsole.NewMessage("Current location: " + GameMain.GameSession.Map.CurrentLocation.DisplayName, Color.Cyan);
             ((MultiPlayerCampaign)GameMain.GameSession.GameMode).LoadInitialLevel();
+            return true;
         }
 
-        public static void LoadCampaign(CampaignDataPath path, Client client)
+        public static bool LoadCampaign(CampaignDataPath path, Client client)
         {
             GameMain.NetLobbyScreen.ToggleCampaignMode(true);
             try
             {
                 SaveUtil.LoadGame(path);
-                if (GameMain.GameSession.GameMode is MultiPlayerCampaign mpCampaign)
+                if (GameMain.GameSession?.GameMode is MultiPlayerCampaign mpCampaign)
                 {
                     mpCampaign.LastSaveID++;
                 }
                 else
                 {
-                    DebugConsole.ThrowError("Failed to load a campaign. Unexpected game mode: " + GameMain.GameSession.GameMode ?? "none");
-                    return;
+                    DebugConsole.ThrowError("Failed to load a campaign. Unexpected game mode: " + (GameMain.GameSession?.GameMode?.ToString() ?? "none"));
+                    return false;
                 }
             }
             catch (Exception e)
@@ -155,13 +171,14 @@ namespace Barotrauma
                     GameMain.Server?.SendDirectChatMessage($"{errorMsg}: {e.Message}\n{e.StackTrace}", client, ChatMessageType.Error);
                 }
                 DebugConsole.ThrowError(errorMsg, e);
-                return;
+                return false;
             }
             DebugConsole.NewMessage("Campaign loaded!", Color.Cyan);
             DebugConsole.NewMessage(
                 GameMain.GameSession.Map.SelectedLocation == null ?
                 GameMain.GameSession.Map.CurrentLocation.DisplayName :
                 GameMain.GameSession.Map.CurrentLocation.DisplayName + " -> " + GameMain.GameSession.Map.SelectedLocation.DisplayName, Color.Cyan);
+            return true;
         }
 
         protected override void LoadInitialLevel()

@@ -17,6 +17,10 @@ bld/
 [Rr]eleaseLinux/
 *.o
 
+# Local DedicatedServer HTTP configuration (contains the access token)
+HTTPPanelSettings.xml
+HTTPPanelSettings.xml.*.tmp
+
 # Misc vs crap 
 *.v12.suo
 *.suo

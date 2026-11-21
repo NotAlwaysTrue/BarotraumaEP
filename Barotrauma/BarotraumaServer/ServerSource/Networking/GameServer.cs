@@ -84,6 +84,11 @@ namespace Barotrauma.Networking
 
         private bool initiatedStartGame;
         private CoroutineHandle startGameCoroutine;
+        public bool RoundStartInProgress => initiatedStartGame || isRoundStartWarningActive;
+        internal string RoundStatus => GameStarted ? (GameMain.GameSession?.GameMode?.Paused == true ? "paused" : "running")
+            : RoundStartInProgress ? "starting" : Screen.Selected == GameMain.NetLobbyScreen ? "lobby" : "loading";
+        public float? RoundAutoRestartSeconds => ServerSettings.AutoRestart && autoRestartTimerRunning
+            ? Math.Max(0.0f, ServerSettings.AutoRestartTimer) : null;
 
         private readonly ServerEntityEventManager entityEventManager;
 
@@ -1840,18 +1845,14 @@ namespace Barotrauma.Networking
                                 using (dosProtection.Pause(sender))
                                 {
                                     Log($"Client \"{ClientLogName(sender)}\" ended the round.", ServerLog.MessageType.ServerMessage);
-                                    if (mpCampaign != null && Level.IsLoadedFriendlyOutpost && save)
+                                    if (save && CanSaveAndEndRound)
                                     {
-                                        mpCampaign.SavePlayers();
-                                        mpCampaign.HandleSaveAndQuit();
-                                        GameMain.GameSession.SubmarineInfo = new SubmarineInfo(GameMain.GameSession.Submarine);
-                                        SaveUtil.SaveGame(GameMain.GameSession.DataPath);
+                                        TrySaveAndEndRound();
                                     }
                                     else
                                     {
-                                        save = false;
+                                        EndGame();
                                     }
-                                    EndGame(wasSaved: save);
                                 }
                             }
                             else if (mpCampaign != null)
@@ -2567,7 +2568,7 @@ namespace Barotrauma.Networking
 
         public TryStartGameResult TryStartGame()
         {
-            if (initiatedStartGame || GameStarted) { return TryStartGameResult.GameAlreadyStarted; }
+            if (RoundStartInProgress || GameStarted) { return TryStartGameResult.GameAlreadyStarted; }
 
             GameModePreset selectedMode =
                 Voting.HighestVoted<GameModePreset>(VoteType.Mode, connectedClients) ?? GameMain.NetLobbyScreen.SelectedMode;
@@ -2656,6 +2657,7 @@ namespace Barotrauma.Networking
 
             if (applyPerks && CheckIfAnyPerksAreIncompatible(selectedSub, selectedEnemySub.Fallback(selectedSub), selectedMode, out var incompatiblePerks))
             {
+                isRoundStartWarningActive = true;
                 CoroutineManager.StartCoroutine(WarnAndDelayStartGame(incompatiblePerks, selectedSub, selectedEnemySub, selectedShuttle, selectedMode), nameof(WarnAndDelayStartGame));
                 return TryStartGameResult.Success;
             }
@@ -2732,7 +2734,6 @@ namespace Barotrauma.Networking
 
         private IEnumerable<CoroutineStatus> WarnAndDelayStartGame(PerkCollection incompatiblePerks, SubmarineInfo selectedSub, Option<SubmarineInfo> selectedEnemySub, SubmarineInfo selectedShuttle, GameModePreset selectedMode)
         {
-            isRoundStartWarningActive = true;
             const float warningDuration = 15.0f;
 
             SerializableDateTime waitUntilTime = SerializableDateTime.UtcNow + TimeSpan.FromSeconds(warningDuration);
@@ -3361,6 +3362,31 @@ namespace Barotrauma.Networking
             GameMain.GameSession.CrewManager?.ServerWriteActiveOrders(msg);
 
             msg.WriteBoolean(GameSession.ShouldApplyDisembarkPoints(GameMain.GameSession.GameMode?.Preset));
+        }
+
+        internal bool CanSaveAndEndRound => GameStarted && Level.IsLoadedFriendlyOutpost &&
+            GameMain.GameSession is { GameMode: MultiPlayerCampaign, IsRunning: true, Submarine: not null };
+
+        internal bool TrySaveAndEndRound()
+        {
+            if (!CanSaveAndEndRound) { return false; }
+
+            var session = GameMain.GameSession;
+            var campaign = (MultiPlayerCampaign)session.GameMode;
+            bool saved = false;
+            try
+            {
+                campaign.SavePlayers();
+                campaign.HandleSaveAndQuit();
+                session.SubmarineInfo = new SubmarineInfo(session.Submarine);
+                saved = SaveUtil.TrySaveGame(session.DataPath);
+                return saved;
+            }
+            finally
+            {
+                // Saving players removes their live inventory items, so the round must end even if the write failed.
+                EndGame(wasSaved: saved);
+            }
         }
 
         public void EndGame(CampaignMode.TransitionType transitionType = CampaignMode.TransitionType.None, bool wasSaved = false, IEnumerable<Mission> missions = null)

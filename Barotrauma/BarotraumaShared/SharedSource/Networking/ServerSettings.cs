@@ -287,7 +287,7 @@ namespace Barotrauma.Networking
 
             PermissionPreset.List.Clear();
             PermissionPreset.LoadAll(PermissionPresetFile);
-            PermissionPreset.LoadAll(PermissionPresetFileCustom);
+            PermissionPreset.LoadAll(PermissionPresetFileCustom, isCustom: true);
             InitProjSpecific();
 
             ServerName = serverName;
@@ -1165,7 +1165,7 @@ namespace Barotrauma.Networking
             }
         }
 
-        [Serialize(8, IsPropertySaveable.Yes)]
+        [Serialize(NetConfig.DefaultMaxPlayers, IsPropertySaveable.Yes)]
         public int MaxPlayers
         {
             get { return maxPlayers; }

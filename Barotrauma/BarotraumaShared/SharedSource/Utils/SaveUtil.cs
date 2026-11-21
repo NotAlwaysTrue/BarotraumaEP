@@ -170,6 +170,9 @@ namespace Barotrauma
         /// Used to work around some quirks with the backup system.
         /// </param>
         public static void SaveGame(CampaignDataPath filePath, bool isSavingOnLoading = false)
+            => TrySaveGame(filePath, isSavingOnLoading);
+
+        public static bool TrySaveGame(CampaignDataPath filePath, bool isSavingOnLoading = false)
         {
             if (!isSavingOnLoading && File.Exists(filePath.SavePath))
             {
@@ -185,7 +188,7 @@ namespace Barotrauma
             catch (Exception e)
             {
                 LogErrorAndSendToClients("Failed to clear folder", e);
-                return;
+                return false;
             }
 
             try
@@ -201,7 +204,7 @@ namespace Barotrauma
             catch (Exception e)
             {
                 LogErrorAndSendToClients("Error saving gamesession", e);
-                return;
+                return false;
             }
 
             try
@@ -234,16 +237,18 @@ namespace Barotrauma
             catch (Exception e)
             {
                 LogErrorAndSendToClients("Error saving submarine", e);
-                return;
+                return false;
             }
 
             try
             {
                 CompressDirectory(TempPath, filePath.SavePath);
+                return true;
             }
             catch (Exception e)
             {
                 LogErrorAndSendToClients("Error compressing save file", e);
+                return false;
             }
 
             void LogErrorAndSendToClients(string errorMsg, Exception e)

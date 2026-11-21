@@ -1,4 +1,4 @@
-﻿//#define RUN_PHYSICS_IN_SEPARATE_THREAD
+//#define RUN_PHYSICS_IN_SEPARATE_THREAD
 
 using Microsoft.Xna.Framework;
 using System.Threading;
@@ -151,18 +151,16 @@ namespace Barotrauma
             }
             MapEntity.ClearHighlightedEntities();
 
-#if CLIENT
             var sw = new System.Diagnostics.Stopwatch();
             sw.Start();
-#endif
 
             GameMain.GameSession?.Update((float)deltaTime);
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:GameSession", sw.ElapsedTicks);
             sw.Restart();
 
+#if CLIENT
             GameMain.ParticleManager.Update((float)deltaTime); 
             
             sw.Stop();
@@ -197,23 +195,24 @@ namespace Barotrauma
             Character.UpdateAll((float)deltaTime, cam);
 #elif SERVER
             if (Level.Loaded != null) Level.Loaded.Update((float)deltaTime, Camera.Instance);
+            sw.Stop();
+            GameMain.PerformanceCounter.AddElapsedTicks("Update:Level", sw.ElapsedTicks);
+            sw.Restart();
             Character.UpdateAll((float)deltaTime, Camera.Instance);
 #endif
 
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Character", sw.ElapsedTicks);
-            sw.Restart(); 
-#endif
+            sw.Restart();
 
             StatusEffect.UpdateAll((float)deltaTime);
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:StatusEffects", sw.ElapsedTicks);
             sw.Restart(); 
 
+#if CLIENT
             if (Character.Controlled != null && 
                 Lights.LightManager.ViewTarget != null)
             {
@@ -267,11 +266,9 @@ namespace Barotrauma
             MapEntity.UpdateAll((float)deltaTime, Camera.Instance);
 #endif
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:MapEntity", sw.ElapsedTicks);
-            sw.Restart(); 
-#endif
+            sw.Restart();
             Character.UpdateAnimAll((float)deltaTime);
 
 #if CLIENT
@@ -280,22 +277,18 @@ namespace Barotrauma
             Ragdoll.UpdateAll((float)deltaTime, Camera.Instance);
 #endif
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Ragdolls", sw.ElapsedTicks);
-            sw.Restart(); 
-#endif
+            sw.Restart();
 
             foreach (Submarine sub in Submarine.Loaded)
             {
                 sub.Update((float)deltaTime);
             }
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Submarine", sw.ElapsedTicks);
             sw.Restart();
-#endif
 
 #if !RUN_PHYSICS_IN_SEPARATE_THREAD
             try
@@ -311,10 +304,8 @@ namespace Barotrauma
 #endif
 
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Physics", sw.ElapsedTicks);
-#endif
             UpdateProjSpecific(deltaTime);
 
 #if RUN_PHYSICS_IN_SEPARATE_THREAD

@@ -1,4 +1,4 @@
-﻿using Barotrauma.Networking;
+using Barotrauma.Networking;
 using Barotrauma.Steam;
 using FarseerPhysics.Dynamics;
 using Microsoft.Xna.Framework;
@@ -26,16 +26,25 @@ namespace Barotrauma
         {
             get
             {
-                if (world == null) { world = new World(new Vector2(0, -9.82f)); }
+                if (world == null)
+                {
+                    world = new World(new Vector2(0, -9.82f));
+                }
                 return world;
             }
-            set { world = value; }
+            set
+            {
+                world = value;
+            }
         }
 
         public static GameServer Server;
         public static NetworkMember NetworkMember
         {
-            get { return Server; }
+            get
+            {
+                return Server;
+            }
         }
 
         public static GameSession GameSession;
@@ -59,11 +68,19 @@ namespace Barotrauma
 
         public static bool ShouldRun = true;
 
+        private static ServerPerformanceMonitor performanceMonitor;
+        public static ServerPerformanceMetrics PerformanceCounter { get; } = new ServerPerformanceMetrics();
+
+        public void StopPerformanceHttp()
+        {
+            Interlocked.Exchange(ref performanceMonitor, null)?.Dispose();
+        }
+
         private static Stopwatch stopwatch;
 
         private static readonly Queue<int> prevUpdateRates = new Queue<int>();
         private static int updateCount = 0;
-        
+
         public static ContentPackage VanillaContent => ContentPackageManager.VanillaCorePackage;
 
 
@@ -149,7 +166,7 @@ namespace Barotrauma
             string password = "";
             bool enableUpnp = false;
 
-            int maxPlayers = 10; 
+            int maxPlayers = NetConfig.DefaultMaxPlayers;
             Option<int> ownerKey = Option.None;
             Option<P2PEndpoint> ownerEndpoint = Option.None;
 
@@ -167,11 +184,11 @@ namespace Barotrauma
                 queryPort = doc.Root.GetAttributeInt(nameof(ServerSettings.QueryPort), NetConfig.DefaultQueryPort);
                 publiclyVisible = doc.Root.GetAttributeBool(nameof(ServerSettings.IsPublic), false);
                 enableUpnp = doc.Root.GetAttributeBool(nameof(ServerSettings.EnableUPnP), false);
-                maxPlayers = doc.Root.GetAttributeInt(nameof(ServerSettings.MaxPlayers), 10);
+                maxPlayers = doc.Root.GetAttributeInt(nameof(ServerSettings.MaxPlayers), NetConfig.DefaultMaxPlayers);
                 password = doc.Root.GetAttributeString("password", "");
                 ownerKey = Option<int>.None();
             }
-            
+
 #if DEBUG
             foreach (string s in CommandLineArgs)
             {
@@ -306,6 +323,7 @@ namespace Barotrauma
 
             Init();
             StartServer();
+            performanceMonitor = ServerPerformanceMonitor.Start();
 
             ResetFrameTime();
 
@@ -331,21 +349,28 @@ namespace Barotrauma
                     //otherwise it snowballs and becomes unplayable
                     Timing.Accumulator = Timing.Step;
                 }
-                
+
                 CrossThread.ProcessTasks();
-                
+
                 prevTicks = currTicks;
                 while (Timing.Accumulator >= Timing.Step)
                 {
+                    using var performanceSample = PerformanceCounter.Measure(ServerPerformanceModule.Update);
                     Timing.TotalTime += Timing.Step;
-                    Timing.TotalTimeUnpaused += Timing.Step;                    
+                    Timing.TotalTimeUnpaused += Timing.Step;
                     DebugConsole.Update();
                     if (GameSession?.GameMode == null || !GameSession.GameMode.Paused)
                     {
                         Screen.Selected?.Update((float)Timing.Step);
                     }
-                    Server.Update((float)Timing.Step);
-                    if (Server == null) { break; }
+                    using (PerformanceCounter.Measure(ServerPerformanceModule.Networking))
+                    {
+                        Server.Update((float)Timing.Step);
+                    }
+                    if (Server == null)
+                    {
+                        break;
+                    }
                     SteamManager.Update((float)Timing.Step);
                     EosInterface.Core.Update();
                     TaskPool.Update();
@@ -354,6 +379,9 @@ namespace Barotrauma
                     Timing.Accumulator -= Timing.Step;
                     updateCount++;
                 }
+
+                performanceMonitor?.ProcessManagementRequests();
+                performanceMonitor?.PublishIfDue();
 
 #if !DEBUG
                 if (Server?.OwnerConnection == null)
@@ -370,7 +398,7 @@ namespace Barotrauma
 
                 int frameTime = (int)((stopwatch.ElapsedTicks - prevTicks) / frequency * 1000.0);
                 frameTime = Math.Max(0, frameTime);
-                
+
                 Thread.Sleep(Math.Max(((int)(Timing.Step * 1000.0) - frameTime) / 2, 0));
 
                 if (performanceCounterTimer.ElapsedMilliseconds > 1000)
@@ -402,6 +430,8 @@ namespace Barotrauma
             }
             stopwatch.Stop();
 
+            StopPerformanceHttp();
+
             CloseServer();
 
             SteamManager.ShutDown();
@@ -409,8 +439,14 @@ namespace Barotrauma
             SaveUtil.CleanUnnecessarySaveFiles();
 
             if (GameSettings.CurrentConfig.SaveDebugConsoleLogs
-                || GameSettings.CurrentConfig.VerboseLogging) { DebugConsole.SaveLogs(); }
-            if (GameAnalyticsManager.SendUserStatistics) { GameAnalyticsManager.ShutDown(); }
+                || GameSettings.CurrentConfig.VerboseLogging)
+            {
+                DebugConsole.SaveLogs();
+            }
+            if (GameAnalyticsManager.SendUserStatistics)
+            {
+                GameAnalyticsManager.ShutDown();
+            }
 
             MainThread = null;
         }
@@ -422,7 +458,7 @@ namespace Barotrauma
             prevUpdateRates.Clear();
             updateCount = 0;
         }
-        
+
         public CoroutineHandle ShowLoading(IEnumerable<CoroutineStatus> loader, bool waitKeyHit = true)
         {
             return CoroutineManager.StartCoroutine(loader);

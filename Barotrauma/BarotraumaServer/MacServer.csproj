@@ -69,6 +69,10 @@
     <Content Remove="DedicatedServer.exe" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="HttpContent\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(Configuration)'!='Debug'">
     <ProjectReference Include="..\..\Libraries\Concentus\CSharp\Concentus\Concentus.NetStandard.csproj" AdditionalProperties="Configuration=Release" />
     <ProjectReference Include="..\..\Libraries\Facepunch.Steamworks\Facepunch.Steamworks.Posix.csproj" AdditionalProperties="Configuration=Release" />

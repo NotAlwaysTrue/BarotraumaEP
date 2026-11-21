@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -61,6 +61,10 @@
     <Compile Include="..\BarotraumaShared\**\*.cs" />
     <Compile Remove="..\BarotraumaShared\Content\**\*.cs" />
     <Content Include="DedicatedServer.exe" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="HttpContent\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)'!='Debug'">

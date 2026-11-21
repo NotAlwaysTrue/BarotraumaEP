@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Server Management</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" type="module"></script>
+</head>
+<body>
+    <div class="panel-nav">
+        <div id="navStatus" class="nav-status" hidden>
+            <p id="server" hidden></p>
+            <p id="status" role="status" hidden></p>
+            <p id="managementStatus" role="status" hidden>Loading server settings...</p>
+        </div>
+        <div class="panel-nav-inner">
+            <nav id="pageTabs" class="page-tabs" aria-label="Pages" hidden>
+                <a id="dashboardTab" href="#dashboard">Dashboard</a>
+                <a id="managementTab" href="#server-management">Server Management</a>
+            </nav>
+            <div class="nav-actions">
+                <button id="panelRefresh" type="button" hidden>Refresh</button>
+                <button id="themeToggle" type="button" aria-pressed="false">Dark Mode</button>
+                <button id="shutdownServer" type="button" class="nav-danger" aria-haspopup="dialog" disabled hidden>Shut down server</button>
+                <button id="logout" type="button" class="nav-danger" hidden>Log out</button>
+            </div>
+        </div>
+    </div>
+    <main>
+        <section id="login" hidden>
+            <h2>Connect to the dashboard</h2>
+            <p>Enter the access token from the server configuration file <code>HTTPPanelSettings.xml</code>.</p>
+            <form id="form">
+                <label for="token">Access token</label>
+                <input id="token" type="password" autocomplete="off" required maxlength="1024">
+                <button type="submit">Login</button>
+            </form>
+        </section>
+        <div id="dashboard" hidden>
+            <div class="grid">
+                <div id="ratePanel" class="card" data-state="normal">
+                    <div class="metric-header">
+                        <div class="label">Simulation TPS</div>
+                        <span id="rateState" class="state-badge">Normal</span>
+                    </div>
+                    <div class="value" id="rate">-</div>
+                    <div class="detail" id="rateDetail"></div>
+                    <div id="freshness" class="state warning" role="status" hidden>Retrying connection...</div>
+                </div>
+                <div class="card">
+                    <div class="label">Round Status</div>
+                    <div class="value" id="round">-</div>
+                    <div class="detail" id="roundDuration" hidden></div>
+                </div>
+                <div class="card">
+                    <div class="label">Process CPU</div>
+                    <div class="value" id="cpu">-</div>
+                    <div class="detail" id="cpuDetail"></div>
+                </div>
+                <div class="card">
+                    <div class="label">Process memory | Working set</div>
+                    <div class="value" id="memory">-</div>
+                    <div class="detail" id="heap"></div>
+                </div>
+                <div class="card">
+                    <div class="label">Connected players</div>
+                    <div class="value" id="players">-</div>
+                </div>
+                <div class="card">
+                    <div class="label">Process uptime</div>
+                    <div class="value" id="uptime">-</div>
+                    <div class="detail" id="gc"></div>
+                </div>
+            </div>
+            <section class="performance-history" aria-labelledby="performanceHistoryTitle">
+                <div class="chart-heading">
+                    <h2 id="performanceHistoryTitle">Performance history</h2>
+                    <div class="chart-controls">
+                        <div class="chart-range">
+                            <label for="chartRange">Time range</label>
+                            <input id="chartRange" type="range" min="60" max="300" step="any" value="120" aria-valuetext="2 minutes">
+                            <span id="chartRangeValue" aria-hidden="true">2:00</span>
+                        </div>
+                        <button id="exportPerformance" type="button" class="secondary" disabled>Export CSV</button>
+                        <button id="selectChartData" type="button" class="secondary" aria-controls="chartMetrics" aria-expanded="false">Select Data</button>
+                    </div>
+                </div>
+                <div id="chartMetrics" class="chart-metrics" role="group" aria-label="Chart data" aria-describedby="chartMetricHint" hidden>
+                    <p id="chartMetricHint" class="chart-note">Select one or more metrics with the same unit.</p>
+                    <div id="chartMetricGroups" class="chart-metric-groups"></div>
+                </div>
+                <canvas id="performanceChart" role="img" aria-label="Performance over the last 2 minutes"></canvas>
+                <ul id="chartLegend" class="chart-legend" aria-label="Chart series"></ul>
+                <div class="chart-controls recording-controls">
+                    <label><input id="recordPerformance" type="checkbox" role="switch" disabled> Full Recording</label>
+                    <button id="exportRecording" type="button" class="secondary" disabled>Export recording CSV</button>
+                </div>
+                <p id="recordingStatus" class="chart-note" role="status">Saved every 5 minutes and at server shutdown.</p>
+            </section>
+            <section class="module-timings" aria-labelledby="moduleTimingsHeading">
+                <h2 id="moduleTimingsHeading">Module Timings</h2>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Module</th>
+                                <th>5-minute Spike / ms</th>
+                                <th>5-minute Mean / ms</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modules"></tbody>
+                    </table>
+                </div>
+            </section>
+            <footer>Simulation TPS and network TickRate are separate. CPU percentage is normalized by available logical processors. GC counts are cumulative since process startup.</footer>
+        </div>
+        <div id="serverManagement" class="management-panels" hidden>
+            <div class="management-tools">
+                <button id="openServerLogs" type="button" class="secondary" aria-haspopup="dialog" disabled>Server logs</button>
+            </div>
+            <section class="players-panel" aria-labelledby="playersHeading">
+                <h2 id="playersHeading">Players <span id="playerCount" class="muted"></span></h2>
+                <div class="table-wrap management-table">
+                    <table>
+                        <thead><tr><th scope="col">Player</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                        <tbody id="managementPlayers"></tbody>
+                    </table>
+                </div>
+                <div class="management-actions player-footer">
+                    <button id="openBanList" type="button" class="secondary" aria-haspopup="dialog" disabled>Manage bans</button>
+                </div>
+            </section>
+            <dialog id="banListDialog" aria-labelledby="bansHeading">
+                <h2 id="bansHeading">Bans <span id="banCount" class="muted"></span></h2>
+                <div class="table-wrap management-table">
+                    <table>
+                        <thead><tr><th scope="col">Player</th><th scope="col">Reason</th><th scope="col">Expires</th><th scope="col">Actions</th></tr></thead>
+                        <tbody id="managementBans"></tbody>
+                    </table>
+                </div>
+                <form method="dialog" class="management-actions dialog-footer">
+                    <button type="submit" class="secondary">Close</button>
+                </form>
+            </dialog>
+            <section class="round-panel" aria-labelledby="roundHeading">
+                <h2 id="roundHeading">Round settings</h2>
+                <p id="managementRoundStatus" class="round-status"></p>
+                <div class="management-actions">
+                    <button id="startRound" type="button" disabled>Start round</button>
+                    <button id="endRound" type="button" class="danger" disabled>End round</button>
+                    <button id="saveAndEndRound" type="button" class="danger" aria-haspopup="dialog" disabled>Save and End Round</button>
+                </div>
+                <form id="roundSettingsForm" novalidate>
+                    <fieldset disabled>
+                        <div class="settings-fields">
+                            <div class="mode-settings">
+                                <label>Game mode <select name="mode" required></select></label>
+                                <button id="selectRoundOption" type="button" class="secondary" aria-haspopup="dialog" disabled>Setting</button>
+                            </div>
+                            <label>Submarine <select name="submarine" required></select></label>
+                            <label>Level seed <input name="seed" type="text" maxlength="64" required></label>
+                            <div>
+                                <div class="range-label">
+                                    <label for="roundDifficulty">Difficulty</label>
+                                    <div class="difficulty-value">
+                                        <input id="roundDifficultyNumber" type="number" min="0" max="100" step="0.1" required aria-label="Difficulty percentage">
+                                        <span aria-hidden="true">%</span>
+                                    </div>
+                                </div>
+                                <input id="roundDifficulty" name="difficulty" type="range" min="0" max="100" step="0.1">
+                            </div>
+                            <label>Auto-restart interval (seconds) <input name="autoRestartInterval" type="number" min="1" max="86400" step="any" required></label>
+                        </div>
+                        <div class="settings-options">
+                            <label><input name="autoRestart" type="checkbox" role="switch"> Auto-restart rounds</label>
+                            <label><input name="startWhenClientsReady" type="checkbox" role="switch"> Start when players are ready</label>
+                            <label><input name="randomizeSeed" type="checkbox" role="switch"> Randomize level seed between rounds</label>
+                        </div>
+                    </fieldset>
+                </form>
+                <div class="management-actions settings-dialog-actions">
+                    <button id="openRoundSetup" type="button" class="secondary" aria-haspopup="dialog" disabled>Round setup</button>
+                    <button id="openRespawnSettings" type="button" class="secondary" aria-haspopup="dialog" disabled>Respawn</button>
+                </div>
+            </section>
+            <dialog id="advancedSettingsDialog" aria-labelledby="advancedSettingsHeading">
+                <h2 id="advancedSettingsHeading">Server settings</h2>
+                <form id="networkSettingsForm" novalidate hidden>
+                    <fieldset disabled>
+                        <label>Network tick rate <input name="tickRate" type="number" min="1" max="60" step="1" required></label>
+                    </fieldset>
+                </form>
+                <div id="dialogSettingsMount">
+                    <div id="advancedSettingsContent">
+                        <p id="advancedSettingsStatus" role="status" hidden></p>
+                        <form id="advancedSettingsForm" novalidate>
+                            <div id="advancedSettingsGroups"></div>
+                        </form>
+                    </div>
+                </div>
+                <form method="dialog" class="management-actions dialog-footer">
+                    <button type="submit" class="secondary">Close</button>
+                </form>
+            </dialog>
+            <dialog id="serverLogsDialog" aria-labelledby="serverLogsHeading">
+                <h2 id="serverLogsHeading">Server logs</h2>
+                <div class="chart-controls">
+                    <label for="serverLogFile" class="visually-hidden">Log source</label>
+                    <select id="serverLogFile"><option value="">Recent log entries</option></select>
+                    <button id="refreshServerLogs" type="button" class="secondary">Refresh</button>
+                </div>
+                <p id="serverLogStatus" role="status"></p>
+                <pre id="serverLogContents" tabindex="0" aria-label="Server log contents"></pre>
+                <form method="dialog" class="management-actions dialog-footer">
+                    <button type="submit" class="secondary">Close</button>
+                </form>
+            </dialog>
+            <dialog id="missionDialog" aria-labelledby="missionHeading">
+                <form method="dialog">
+                    <h2 id="missionHeading">Mission types</h2>
+                    <div id="missionChoices" class="settings-options"></div>
+                    <div class="management-actions dialog-footer">
+                        <button type="submit" class="secondary">Close</button>
+                    </div>
+                </form>
+            </dialog>
+            <dialog id="campaignDialog" aria-labelledby="campaignHeading" aria-describedby="campaignLoadNote">
+                <h2 id="campaignHeading">Campaign saves</h2>
+                <p id="campaignLoadNote">Creating or loading a save starts a campaign round.</p>
+                <p id="campaignStatus" role="status"></p>
+                <form id="campaignSaveForm">
+                    <label>Save <select id="campaignSave" required disabled></select></label>
+                    <div class="management-actions dialog-footer">
+                        <button id="closeCampaignDialog" type="button" class="secondary">Close</button>
+                        <button id="openCampaignSettings" type="button" class="secondary" aria-haspopup="dialog" disabled>Campaign settings</button>
+                        <button id="showNewCampaign" type="button" class="secondary" disabled>New save</button>
+                        <button id="loadCampaignSave" type="submit" class="danger" disabled>Load save</button>
+                    </div>
+                </form>
+                <div id="newCampaignPanel" hidden>
+                    <form id="newCampaignForm" class="settings-fields">
+                        <label class="full-width">Save name <input id="newCampaignName" type="text" maxlength="64" required></label>
+                        <label>Starting submarine <select id="newCampaignSubmarine" required></select></label>
+                        <label>Level seed <input id="newCampaignSeed" type="text" maxlength="64" required></label>
+                    </form>
+                    <div id="newCampaignSettingsMount"></div>
+                    <div class="management-actions dialog-footer">
+                        <button id="cancelNewCampaign" type="button" class="secondary">Back</button>
+                        <button id="createCampaignSave" type="submit" form="newCampaignForm" class="danger" disabled>Create and start</button>
+                    </div>
+                </div>
+            </dialog>
+            <section id="serverSettingsPanel" aria-labelledby="serverSettingsHeading">
+                <h2 id="serverSettingsHeading">Server settings</h2>
+                <details class="settings-section">
+                    <summary>Basic server settings</summary>
+                    <div class="settings-section-body">
+                        <form id="miscSettingsForm" novalidate>
+                            <fieldset disabled>
+                                <div class="settings-fields">
+                                    <label>Server name <input name="serverName" type="text" maxlength="60" required></label>
+                                    <label>Play style <select name="playStyle" required></select></label>
+                                    <label>Player limit <input name="maxPlayers" type="number" min="1" step="1" required></label>
+                                    <label class="full-width">Server message <textarea name="message" maxlength="2000" rows="3"></textarea></label>
+                                </div>
+                            </fieldset>
+                        </form>
+                        <div id="basicAdvancedSettings" class="settings-fields additional-fields"></div>
+                        <form id="serverPasswordForm" class="server-password-settings">
+                            <p id="serverPasswordStatus"></p>
+                            <div class="management-actions">
+                                <label>Server password <input id="serverPassword" type="password" autocomplete="new-password" maxlength="64"></label>
+                                <button id="setServerPassword" type="submit" class="danger" disabled>Change Password</button>
+                            </div>
+                        </form>
+                        <div class="management-actions settings-dialog-actions">
+                            <button id="openNetworking" type="button" class="secondary" aria-haspopup="dialog" disabled>Network Settings</button>
+                            <button id="openLogSettings" type="button" class="secondary" aria-haspopup="dialog" disabled>Log Settings</button>
+                        </div>
+                    </div>
+                </details>
+                <details class="settings-section">
+                    <summary>Voting settings</summary>
+                    <div class="settings-section-body">
+                        <form id="votingSettingsForm" novalidate>
+                            <fieldset class="settings-options" disabled>
+                                <label><input name="allowVoteKick" type="checkbox" role="switch"> Allow vote kick</label>
+                                <label><input name="allowEndVoting" type="checkbox" role="switch"> Allow end-round voting</label>
+                            </fieldset>
+                        </form>
+                        <div id="votingAdvancedSettings" class="settings-fields additional-fields"></div>
+                    </div>
+                </details>
+                <details class="settings-section">
+                    <summary>Gameplay settings</summary>
+                    <div class="settings-section-body">
+                        <form id="gameplaySettingsForm" novalidate>
+                            <fieldset class="settings-options" disabled>
+                                <label><input name="allowRewiring" type="checkbox" role="switch"> Allow rewiring</label>
+                                <label><input name="allowDisguises" type="checkbox" role="switch"> Allow disguises</label>
+                            </fieldset>
+                        </form>
+                        <div id="gameplayAdvancedSettings" class="settings-fields additional-fields"></div>
+                        <div class="management-actions settings-dialog-actions">
+                            <div id="karmaSwitchMount"></div>
+                            <button id="openKarmaSettings" type="button" class="secondary" aria-haspopup="dialog" disabled>Karma Settings</button>
+                        </div>
+                    </div>
+                </details>
+                <details id="moreSettings" class="settings-section">
+                    <summary id="moreSettingsToggle" aria-disabled="true">More Settings</summary>
+                    <div class="settings-section-body">
+                        <form id="lobbySettingsForm" class="more-settings-grid" novalidate>
+                            <div id="extraCargoSettings" class="settings-section" hidden>
+                                <h3>Extra cargo</h3>
+                                <div class="settings-section-body">
+                                    <div class="cargo-controls">
+                                        <label>Item <select id="extraCargoChoice" disabled></select></label>
+                                        <button id="addExtraCargo" class="secondary" type="button" disabled>Add</button>
+                                    </div>
+                                    <p id="extraCargoCount"></p>
+                                    <div id="extraCargoItems"></div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </details>
+                <p id="serverSettingsStatus" role="status" hidden></p>
+            </section>
+        </div>
+        <div class="management-panels">
+            <dialog id="managementDialog" aria-labelledby="managementDialogTitle">
+                <form id="managementDialogForm" method="dialog">
+                    <h2 id="managementDialogTitle"></h2>
+                    <p id="managementDialogPrompt" hidden></p>
+                    <label id="moderationReason" hidden>Reason <input name="reason" maxlength="256"></label>
+                    <label id="banDuration" hidden>Duration in minutes (blank for permanent)
+                        <input name="banMinutes" type="number" min="1" max="525600" step="1">
+                    </label>
+                    <div id="permissionEditor" hidden>
+                        <label>Preset <select id="permissionPreset"></select></label>
+                        <p id="permissionOptionsStatus" role="status" hidden></p>
+                        <div class="permission-groups">
+                            <div>
+                                <h3>Permissions</h3>
+                                <div class="permission-add">
+                                    <div class="permission-picker">
+                                        <input id="permissionChoice" type="text" role="combobox" aria-label="Permission to add" aria-autocomplete="list" aria-expanded="false" aria-controls="permissionSuggestions" autocomplete="off" spellcheck="false" placeholder="Search permissions" disabled>
+                                        <ul id="permissionSuggestions" class="permission-suggestions" role="listbox" aria-label="Available permissions" hidden></ul>
+                                    </div>
+                                    <button id="addPermission" class="secondary" type="button" aria-label="Add permission">Add</button>
+                                </div>
+                                <ul id="grantedPermissions" class="permission-list" aria-label="Granted permissions"></ul>
+                            </div>
+                            <div>
+                                <h3>Console commands</h3>
+                                <div class="permission-add">
+                                    <div class="permission-picker">
+                                        <input id="commandChoice" type="text" role="combobox" aria-label="Console command to add" aria-autocomplete="list" aria-expanded="false" aria-controls="commandSuggestions" autocomplete="off" spellcheck="false" placeholder="Search commands" disabled>
+                                        <ul id="commandSuggestions" class="permission-suggestions" role="listbox" aria-label="Available console commands" hidden></ul>
+                                    </div>
+                                    <button id="addCommandPermission" class="secondary" type="button" aria-label="Add console command">Add</button>
+                                </div>
+                                <ul id="grantedCommands" class="permission-list" aria-label="Granted console commands"></ul>
+                            </div>
+                        </div>
+                        <div class="management-actions permission-actions">
+                            <button id="addAllPermissions" class="danger" type="button">Add All</button>
+                            <button id="clearAllPermissions" class="danger" type="button">Clear All</button>
+                        </div>
+                    </div>
+                    <p id="managementDialogError" class="warning" role="alert" hidden></p>
+                    <div class="management-actions">
+                        <button id="managementDialogCancel" type="button" class="secondary">Cancel</button>
+                        <button id="managementDialogSubmit" type="submit" class="danger"></button>
+                    </div>
+                </form>
+            </dialog>
+        </div>
+    </main>
+</body>
+</html>

@@ -1,4 +1,4 @@
-﻿#region Using Statements
+#region Using Statements
 
 using Barotrauma.Steam;
 using System;
@@ -82,7 +82,14 @@ namespace Barotrauma
                 log: DebugConsole.Log);
             Game = new GameMain(args);
 
-            Game.Run();
+            try
+            {
+                Game.Run();
+            }
+            finally
+            {
+                Game.StopPerformanceHttp();
+            }
             ShutDown();
         }
 
@@ -91,6 +98,7 @@ namespace Barotrauma
         {
             if (hasShutDown) { return; }
             hasShutDown = true;
+            Game?.StopPerformanceHttp();
 
             if (GameAnalyticsManager.SendUserStatistics) { GameAnalyticsManager.ShutDown(); }
             SteamManager.ShutDown();
