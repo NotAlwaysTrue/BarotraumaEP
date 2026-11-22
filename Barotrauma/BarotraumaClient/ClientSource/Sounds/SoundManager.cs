@@ -753,20 +753,17 @@ namespace Barotrauma.Sounds
                 if (!canStartChannelWork || GameMain.IsExiting) { return; }
                 if (channelWork == null)
                 {
-                    var work = ThreadManager.Instance.CreateScope("Audio channels");
                     var wake = new AutoResetEvent(false);
                     try
                     {
-                        work.StartThread("SoundManager.UpdateChannels", stopping => UpdateChannels(stopping, wake));
+                        channelWork = ThreadManager.Instance.StartScopedThread("SoundManager.UpdateChannels", stopping => UpdateChannels(stopping, wake));
                     }
                     catch
                     {
                         wake.Dispose();
-                        work.Dispose();
                         throw;
                     }
                     channelWake = wake;
-                    channelWork = work;
                 }
                 channelWake.Set();
             }

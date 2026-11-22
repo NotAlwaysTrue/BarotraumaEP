@@ -21,25 +21,18 @@ internal sealed partial class ImplementationPrivate : Barotrauma.EosInterface.Im
     {
         private readonly ConcurrentQueue<Task> taskQueue = new ConcurrentQueue<Task>();
 
-        internal Task<T> Schedule<T>(Func<Task<T>> action)
+        private readonly TaskFactory factory;
+
+        internal CustomTaskScheduler()
         {
-            return TrackScheduled(() =>
-                Task.Factory.StartNew(
-                    function: action,
-                    cancellationToken: CancellationToken.None,
-                    creationOptions: TaskCreationOptions.None,
-                    scheduler: this).Unwrap());
+            factory = new TaskFactory(CancellationToken.None, TaskCreationOptions.None, TaskContinuationOptions.None, this);
         }
 
+        internal Task<T> Schedule<T>(Func<Task<T>> action)
+            => TrackScheduled(() => factory.StartNew(action).Unwrap());
+
         internal Task Schedule(Func<Task> action)
-        {
-            return TrackScheduled(() =>
-                Task.Factory.StartNew(
-                    function: action,
-                    cancellationToken: CancellationToken.None,
-                    creationOptions: TaskCreationOptions.None,
-                    scheduler: this).Unwrap());
-        }
+            => TrackScheduled(() => factory.StartNew(action).Unwrap());
 
         private static T TrackScheduled<T>(Func<T> start) where T : Task
             => ThreadManager.Current?.Process.Schedule("EOS main-thread operation", start) ?? start();

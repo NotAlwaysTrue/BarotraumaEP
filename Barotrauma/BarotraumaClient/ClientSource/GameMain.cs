@@ -471,8 +471,7 @@ namespace Barotrauma
 
             Eos.EosAccount.LoginPlatformSpecific();
 
-            initialLoading = ThreadManager.Instance.CreateScope("Initial loading");
-            initialLoading.StartThread("Load", Load, background: false);
+            initialLoading = ThreadManager.Instance.StartScopedThread("Load", Load, background: false);
         }
 
         internal void StopInitialLoading()

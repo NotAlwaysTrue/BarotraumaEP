@@ -16,7 +16,6 @@ public sealed class ThreadManager : IDisposable
     private readonly object gate = new object();
     private readonly Queue<Action> mainQueue = new Queue<Action>();
     private readonly HashSet<WorkScope> scopes = new HashSet<WorkScope>();
-    private readonly Dictionary<Type, object> services = new Dictionary<Type, object>();
     private bool stopping;
     private bool dispatchClosed;
 
@@ -50,31 +49,18 @@ public sealed class ThreadManager : IDisposable
         }
     }
 
-    public void RegisterService<T>(T service) where T : class
+    public WorkScope StartScopedThread(string name, Action<CancellationToken> action, bool background = true)
     {
-        lock (gate)
+        var scope = CreateScope(name);
+        try
         {
-            ObjectDisposedException.ThrowIf(stopping, this);
-            services.Add(typeof(T), service);
+            scope.StartThread(name, action, background);
+            return scope;
         }
-    }
-
-    public T? GetService<T>() where T : class
-    {
-        lock (gate)
+        catch
         {
-            return services.TryGetValue(typeof(T), out var service) ? (T)service : null;
-        }
-    }
-
-    public void UnregisterService<T>(T service) where T : class
-    {
-        lock (gate)
-        {
-            if (services.TryGetValue(typeof(T), out var registered) && ReferenceEquals(registered, service))
-            {
-                services.Remove(typeof(T));
-            }
+            scope.Dispose();
+            throw;
         }
     }
 
@@ -173,7 +159,6 @@ public sealed class ThreadManager : IDisposable
                 if (mainQueue.Count == 0)
                 {
                     dispatchClosed = true;
-                    services.Clear();
                     scopes.Clear();
                     break;
                 }
@@ -213,7 +198,7 @@ public sealed class ThreadManager : IDisposable
     {
         private readonly object gate = new object();
         private readonly CancellationTokenSource stop = new CancellationTokenSource();
-        private readonly Dictionary<Task, string> tasks = new Dictionary<Task, string>();
+        private readonly Dictionary<Task, Task> tasks = new();
         private readonly ThreadManager? manager;
         private Task? stopCompletion;
         private int finalized;
@@ -236,35 +221,26 @@ public sealed class ThreadManager : IDisposable
             lock (gate)
             {
                 ObjectDisposedException.ThrowIf(stopCompletion != null, this);
-                CancellationToken token = Stopping;
-                var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var thread = new Thread(() =>
                 {
                     try
                     {
-                        action(token);
-                        completion.SetResult();
+                        action(Stopping);
                     }
-                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    catch (OperationCanceledException) when (Stopping.IsCancellationRequested)
                     {
-                        completion.SetCanceled(token);
+                        // Cooperative cancellation ends this thread normally.
                     }
-                    catch (Exception error)
+                    finally
                     {
-                        completion.SetException(error);
-                        throw;
+                        exited.SetResult();
                     }
                 }) { Name = name, IsBackground = background };
-                TrackLocked(name, completion.Task);
-                try
-                {
-                    thread.Start();
-                }
-                catch (Exception error)
-                {
-                    completion.SetException(error);
-                    throw;
-                }
+
+                // Shutdown takes this same lock before collecting the work it must wait for.
+                thread.Start();
+                TrackLocked(exited.Task, exited.Task);
                 return thread;
             }
         }
@@ -288,7 +264,7 @@ public sealed class ThreadManager : IDisposable
             {
                 ObjectDisposedException.ThrowIf(stopCompletion != null, this);
                 T task = start();
-                TrackLocked(name, task);
+                TrackLocked(task, task);
                 return task;
             }
         }
@@ -301,7 +277,7 @@ public sealed class ThreadManager : IDisposable
                 {
                     // External operations may depend on a native callback that its SDK
                     // drops at shutdown. Cancel the observation; the SDK owns the operation.
-                    TrackLocked(name, task.WaitAsync(Stopping));
+                    TrackLocked(task, task.WaitAsync(Stopping));
                 }
             }
         }
@@ -313,33 +289,31 @@ public sealed class ThreadManager : IDisposable
             try
             {
                 Parallel.For(start, end, new ParallelOptions { CancellationToken = Stopping }, action);
+            }
+            finally
+            {
+                // The caller receives loop exceptions directly. Shutdown only waits for the loop to exit.
                 completion.SetResult();
-            }
-            catch (OperationCanceledException) when (Stopping.IsCancellationRequested)
-            {
-                completion.SetCanceled(Stopping);
-                throw;
-            }
-            catch (Exception error)
-            {
-                completion.SetException(error);
-                throw;
             }
         }
 
-        private void TrackLocked(string name, Task task)
+        private void TrackLocked(Task original, Task completion)
         {
-            if (!tasks.TryAdd(task, name))
+            if (tasks.TryGetValue(original, out Task? previous) && previous == completion)
             {
                 return;
             }
-            _ = task.ContinueWith(completed =>
+            // Scheduling an externally observed task takes ownership of its actual lifetime.
+            tasks[original] = completion;
+            _ = completion.ContinueWith(completed =>
             {
-                // Observe faults even for jobs whose caller does not consume the returned task.
                 _ = completed.Exception;
                 lock (gate)
                 {
-                    tasks.Remove(completed);
+                    if (tasks.TryGetValue(original, out Task? registered) && registered == completed)
+                    {
+                        tasks.Remove(original);
+                    }
                 }
             }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
@@ -348,7 +322,7 @@ public sealed class ThreadManager : IDisposable
         {
             lock (gate)
             {
-                stopCompletion ??= stop.CancelAsync();
+                stopCompletion ??= Task.WhenAll(tasks.Values.Append(stop.CancelAsync()));
             }
         }
 
@@ -357,7 +331,7 @@ public sealed class ThreadManager : IDisposable
             Task completion;
             lock (gate)
             {
-                completion = Task.WhenAll(tasks.Keys.Append(stopCompletion!));
+                completion = stopCompletion!;
             }
 
             while (!completion.IsCompleted)
@@ -370,7 +344,6 @@ public sealed class ThreadManager : IDisposable
                 ((IAsyncResult)completion).AsyncWaitHandle.WaitOne(10);
             }
             _ = completion.Exception;
-            completion.Dispose();
             if (Interlocked.Exchange(ref finalized, 1) == 0)
             {
                 stop.Dispose();

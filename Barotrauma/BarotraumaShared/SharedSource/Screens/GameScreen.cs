@@ -74,8 +74,7 @@ namespace Barotrauma
 
 #if RUN_PHYSICS_IN_SEPARATE_THREAD
             physicsWork?.Dispose();
-            physicsWork = ThreadManager.Instance.CreateScope("Game screen physics");
-            physicsWork.StartThread("Physics thread", ExecutePhysics);
+            physicsWork = ThreadManager.Instance.StartScopedThread("Physics thread", ExecutePhysics);
 #endif
         }
 

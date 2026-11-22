@@ -23,8 +23,6 @@ namespace Barotrauma.Networking
 
         private ThreadManager.WorkScope captureWork;
 
-        private volatile bool capturing;
-
         private readonly OpusEncoder encoder;
 
         public double LastdB
@@ -149,9 +147,15 @@ namespace Barotrauma.Networking
                 throw new Exception("Failed to start capturing: " + alcError.ToString());
             }
 
-            capturing = true;
-            captureWork = ThreadManager.Instance.CreateScope("Voice capture");
-            captureWork.StartThread("VoipCapture", UpdateCapture);
+            try
+            {
+                captureWork = ThreadManager.Instance.StartScopedThread("VoipCapture", UpdateCapture);
+            }
+            catch
+            {
+                Alc.CaptureCloseDevice(captureDevice);
+                throw;
+            }
         }
 
         public static void ChangeCaptureDevice(string deviceName)
@@ -181,7 +185,7 @@ namespace Barotrauma.Networking
             nativeBuffer = Marshal.AllocHGlobal(VoipConfig.BUFFER_SIZE * 2);
             try
             {
-                while (capturing && !stopping.IsCancellationRequested)
+                while (!stopping.IsCancellationRequested)
                 {
                     int alcError;
 
@@ -203,7 +207,8 @@ namespace Barotrauma.Networking
                         }
                     }
 
-                    FillBuffer();
+                    FillBuffer(stopping);
+                    if (stopping.IsCancellationRequested) { break; }
 
                     alcError = Alc.GetError(captureDevice);
                     if (alcError != Alc.NoError)
@@ -307,7 +312,6 @@ namespace Barotrauma.Networking
             catch (Exception e)
             {
                 DebugConsole.ThrowError($"VoipCapture threw an exception. Disabling capture...", e);
-                capturing = false;
             }
             finally
             {
@@ -319,12 +323,12 @@ namespace Barotrauma.Networking
         private int overridePos;
         private readonly short[] overrideBuf = new short[VoipConfig.BUFFER_SIZE];
 
-        private void FillBuffer()
+        private void FillBuffer(CancellationToken stopping)
         {
             if (overrideSound != null)
             {
                 int totalSampleCount = 0;
-                while (totalSampleCount < VoipConfig.BUFFER_SIZE)
+                while (totalSampleCount < VoipConfig.BUFFER_SIZE && !stopping.IsCancellationRequested)
                 {
                     int sampleCount = overrideSound.FillStreamBuffer(overridePos, overrideBuf);
                     overridePos += sampleCount * 2;
@@ -337,7 +341,7 @@ namespace Barotrauma.Networking
                     }                    
                 }
                 int sleepMs = VoipConfig.BUFFER_SIZE * 800 / VoipConfig.FREQUENCY;
-                Thread.Sleep(sleepMs - 1);
+                stopping.WaitHandle.WaitOne(sleepMs - 1);
             }
             else
             {
@@ -358,11 +362,11 @@ namespace Barotrauma.Networking
                         int sleepMs = (VoipConfig.BUFFER_SIZE - sampleCount) * 800 / VoipConfig.FREQUENCY;
                         if (sleepMs >= 1)
                         {
-                            Thread.Sleep(sleepMs);
+                            stopping.WaitHandle.WaitOne(sleepMs);
                         }
                     }
 
-                    if (!capturing) { return; }
+                    if (stopping.IsCancellationRequested) { return; }
                 }
 
                 Alc.CaptureSamples(captureDevice, nativeBuffer, VoipConfig.BUFFER_SIZE);
@@ -393,7 +397,6 @@ namespace Barotrauma.Networking
         public override void Dispose()
         {
             Instance = null;
-            capturing = false;
             captureWork?.Dispose();
             captureWork = null;
             if (captureDevice != IntPtr.Zero) { Alc.CaptureCloseDevice(captureDevice); }

@@ -27,11 +27,8 @@ namespace Barotrauma.Steam
             public LocalThumbnail(string path)
             {
                 TaskPool.Add($"LocalThumbnail {path}",
-                    ThreadManager.Instance.Process.RunBackground("Workshop thumbnail", async _ =>
-                    {
-                        await Task.Yield();
-                        return TextureLoader.FromFile(path, compress: false, mipmap: false);
-                    }),
+                    ThreadManager.Instance.Process.RunBackgroundValue("Workshop thumbnail",
+                        _ => TextureLoader.FromFile(path, compress: false, mipmap: false)),
                     (t) =>
                     {
                         Loading = false;
