@@ -1,54 +1,32 @@
-//#define RUN_PHYSICS_IN_SEPARATE_THREAD
-
-using Microsoft.Xna.Framework;
-using System.Threading;
-using FarseerPhysics.Dynamics;
 using FarseerPhysics;
+using FarseerPhysics.Dynamics;
 
-
-#if DEBUG && CLIENT
-using System;
-using Barotrauma.Sounds;
+#if CLIENT
+using Microsoft.Xna.Framework;
+#if DEBUG
 using Microsoft.Xna.Framework.Input;
+#endif
 #endif
 
 namespace Barotrauma
 {
     partial class GameScreen : Screen
     {
-        private object updateLock = new object();
-        private double physicsTime;
-#if RUN_PHYSICS_IN_SEPARATE_THREAD
-        private ThreadManager.WorkScope physicsWork;
-#endif
+        public double GameTime { get; private set; }
 
 #if CLIENT
         private readonly Camera cam;
 
-        public override Camera Cam
-        {
-            get { return cam; }
-        }
-#elif SERVER
-        public override Camera Cam
-        {
-            get { return Camera.Instance; }
-        }
-#endif
+        public override Camera Cam => cam;
 
-        public double GameTime
-        {
-            get;
-            private set;
-        }
-        
         public GameScreen()
         {
-#if CLIENT
             cam = new Camera();
             cam.Translate(new Vector2(-10.0f, 50.0f));
-#endif
         }
+#elif SERVER
+        public override Camera Cam => Camera.Instance;
+#endif
 
         public override void Select()
         {
@@ -67,23 +45,13 @@ namespace Barotrauma
             }
             GameMain.GameSession?.CrewManager?.ResetCrewListOpenState();
             ChatBox.ResetChatBoxOpenState();
-            
 #endif
 
             MapEntity.ClearHighlightedEntities();
-
-#if RUN_PHYSICS_IN_SEPARATE_THREAD
-            physicsWork?.Dispose();
-            physicsWork = ThreadManager.Instance.StartScopedThread("Physics thread", ExecutePhysics);
-#endif
         }
 
         public override void Deselect()
         {
-#if RUN_PHYSICS_IN_SEPARATE_THREAD
-            physicsWork?.Dispose();
-            physicsWork = null;
-#endif
             base.Deselect();
 #if CLIENT
             var config = GameSettings.CurrentConfig;
@@ -108,14 +76,8 @@ namespace Barotrauma
         /// </summary>
         public override void Update(double deltaTime)
         {
-#if RUN_PHYSICS_IN_SEPARATE_THREAD
-            physicsTime += deltaTime;
-            lock (updateLock)
-            { 
-#endif
-
-
-#if DEBUG && CLIENT
+#if CLIENT
+#if DEBUG
             if (GameMain.GameSession != null && !DebugConsole.IsOpen && GUI.KeyboardDispatcher.Subscriber == null)
             {
                 if (GameMain.GameSession.Level != null && GameMain.GameSession.Submarine != null)
@@ -136,7 +98,6 @@ namespace Barotrauma
             }
 #endif
 
-#if CLIENT
             GameMain.LightManager?.Update((float)deltaTime);
 #endif
 
@@ -168,13 +129,15 @@ namespace Barotrauma
             
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Particles", sw.ElapsedTicks);
-            sw.Restart();  
+            sw.Restart();
+#endif
 
-            if (Level.Loaded != null) Level.Loaded.Update((float)deltaTime, cam);
+            Level.Loaded?.Update((float)deltaTime, Cam);
 
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Level", sw.ElapsedTicks);
 
+#if CLIENT
             if (Character.Controlled is { } controlled)
             {
                 if (controlled.SelectedItem != null && controlled.CanInteractWith(controlled.SelectedItem))
@@ -192,18 +155,10 @@ namespace Barotrauma
                     }
                 }
             }
-
-            sw.Restart();
-
-            Character.UpdateAll((float)deltaTime, cam);
-#elif SERVER
-            if (Level.Loaded != null) Level.Loaded.Update((float)deltaTime, Camera.Instance);
-            sw.Stop();
-            GameMain.PerformanceCounter.AddElapsedTicks("Update:Level", sw.ElapsedTicks);
-            sw.Restart();
-            Character.UpdateAll((float)deltaTime, Camera.Instance);
 #endif
 
+            sw.Restart();
+            Character.UpdateAll((float)deltaTime, Cam);
 
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Character", sw.ElapsedTicks);
@@ -263,22 +218,14 @@ namespace Barotrauma
                 }
             }
 
-#if CLIENT
-            MapEntity.UpdateAll((float)deltaTime, cam);
-#elif SERVER
-            MapEntity.UpdateAll((float)deltaTime, Camera.Instance);
-#endif
+            MapEntity.UpdateAll((float)deltaTime, Cam);
 
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:MapEntity", sw.ElapsedTicks);
             sw.Restart();
             Character.UpdateAnimAll((float)deltaTime);
 
-#if CLIENT
-            Ragdoll.UpdateAll((float)deltaTime, cam);
-#elif SERVER
-            Ragdoll.UpdateAll((float)deltaTime, Camera.Instance);
-#endif
+            Ragdoll.UpdateAll((float)deltaTime, Cam);
 
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Ragdolls", sw.ElapsedTicks);
@@ -293,7 +240,6 @@ namespace Barotrauma
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Submarine", sw.ElapsedTicks);
             sw.Restart();
 
-#if !RUN_PHYSICS_IN_SEPARATE_THREAD
             try
             {
                 GameMain.World.Step((float)Timing.Step);
@@ -304,33 +250,12 @@ namespace Barotrauma
                 DebugConsole.ThrowError(errorMsg, e);
                 GameAnalyticsManager.AddErrorEventOnce("GameScreen.Update:WorldLockedException" + e.Message, GameAnalyticsManager.ErrorSeverity.Critical, errorMsg);
             }
-#endif
-
 
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Physics", sw.ElapsedTicks);
             UpdateProjSpecific(deltaTime);
-
-#if RUN_PHYSICS_IN_SEPARATE_THREAD
-            }
-#endif
         }
 
         partial void UpdateProjSpecific(double deltaTime);
-
-        private void ExecutePhysics(CancellationToken stopping)
-        {
-            while (!stopping.IsCancellationRequested)
-            {
-                while (physicsTime >= Timing.Step)
-                {
-                    lock (updateLock)
-                    {
-                        GameMain.World.Step((float)Timing.Step);
-                        physicsTime -= Timing.Step;
-                    }
-                }
-            }
-        }
     }
 }
