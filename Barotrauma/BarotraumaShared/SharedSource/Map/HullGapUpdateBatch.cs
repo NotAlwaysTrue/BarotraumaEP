@@ -230,6 +230,8 @@ namespace Barotrauma
                     // The index breaks ties in the same order as LINQ's stable OrderBy.
                     for (int index = 0; index < gaps.Count; index++)
                     {
+                        // Recursive flooding can use any gap in the group before its own update.
+                        gaps[index].ResetWaterFlowThisFrame();
                         orderKeys[index] = ((long)Rand.Int(int.MaxValue) << 32) | (uint)index;
                     }
                     Array.Sort(orderKeys, 0, gaps.Count);
@@ -241,6 +243,10 @@ namespace Barotrauma
                 }
                 else
                 {
+                    foreach (Gap gap in gaps)
+                    {
+                        gap.ResetWaterFlowThisFrame();
+                    }
                     for (int index = 0; index < orderedIndices.Count; index++)
                     {
                         int gap = orderedIndices[index];
