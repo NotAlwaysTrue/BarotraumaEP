@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2018 Kastellanos Nikolaos
+// Copyright (c) 2018 Kastellanos Nikolaos
 
 /* Original source Farseer Physics Engine:
  * Copyright (c) 2014 Ian Qvist, http://farseerphysics.codeplex.com
@@ -74,7 +74,8 @@ namespace FarseerPhysics.Collision
     /// </summary>
     public class DynamicTree<T>
     {
-        private Stack<int> _raycastStack = new Stack<int>(256);
+        [ThreadStatic]
+        private static Stack<int> _spareRayCastStack;
         private Stack<int> _queryStack = new Stack<int>(256);
         private int _freeList;
         private int _nodeCapacity;
@@ -460,71 +461,80 @@ namespace FarseerPhysics.Collision
                 Vector2.Max(ref p1, ref t, out segmentAABB.UpperBound);
             }
 
-            _raycastStack.Clear();
-            _raycastStack.Push(_root);
-
-            while (_raycastStack.Count > 0)
+            Stack<int> stack = _spareRayCastStack ?? new Stack<int>(256);
+            _spareRayCastStack = null;
+            try
             {
-                int nodeId = _raycastStack.Pop();
-                if (nodeId == NullNode)
-                {
-                    continue;
-                }
+                stack.Push(_root);
 
-                //TreeNode<T>* node = &_nodes[nodeId];
-
-                if (AABB.TestOverlap(ref _nodes[nodeId].AABB, ref segmentAABB) == false)
+                while (stack.Count > 0)
                 {
-                    continue;
-                }
-
-                // Separating axis for segment (Gino, p80).
-                // |dot(v, p1 - c)| > dot(|v|, h)
-                Vector2 c = _nodes[nodeId].AABB.Center;
-                Vector2 h = _nodes[nodeId].AABB.Extents;
-                float separation = Math.Abs(Vector2.Dot(new Vector2(-r.Y, r.X), p1 - c)) - Vector2.Dot(absV, h);
-                if (separation > 0.0f)
-                {
-                    continue;
-                }
-
-                if (_nodes[nodeId].IsLeaf())
-                {
-                    FixtureProxy proxy = broadPhase.GetProxy(nodeId);
-                    if (collisionCategory != Category.All &&
-                        //!collisionCategory.HasFlag(proxy.Fixture.CollisionCategories)
-                        (collisionCategory & proxy.Fixture.CollisionCategories) == 0)
+                    int nodeId = stack.Pop();
+                    if (nodeId == NullNode)
                     {
                         continue;
                     }
 
-                    RayCastInput subInput;
-                    subInput.Point1 = input.Point1;
-                    subInput.Point2 = input.Point2;
-                    subInput.MaxFraction = maxFraction;
+                    //TreeNode<T>* node = &_nodes[nodeId];
 
-                    float value = callback(subInput, proxy);
-
-                    if (value == 0.0f)
+                    if (AABB.TestOverlap(ref _nodes[nodeId].AABB, ref segmentAABB) == false)
                     {
-                        // the client has terminated the raycast.
-                        return;
+                        continue;
                     }
 
-                    if (value > 0.0f)
+                    // Separating axis for segment (Gino, p80).
+                    // |dot(v, p1 - c)| > dot(|v|, h)
+                    Vector2 c = _nodes[nodeId].AABB.Center;
+                    Vector2 h = _nodes[nodeId].AABB.Extents;
+                    float separation = Math.Abs(Vector2.Dot(new Vector2(-r.Y, r.X), p1 - c)) - Vector2.Dot(absV, h);
+                    if (separation > 0.0f)
                     {
-                        // Update segment bounding box.
-                        maxFraction = value;
-                        Vector2 t = p1 + maxFraction * (p2 - p1);
-                        Vector2.Min(ref p1, ref t, out segmentAABB.LowerBound);
-                        Vector2.Max(ref p1, ref t, out segmentAABB.UpperBound);
+                        continue;
+                    }
+
+                    if (_nodes[nodeId].IsLeaf())
+                    {
+                        FixtureProxy proxy = broadPhase.GetProxy(nodeId);
+                        if (collisionCategory != Category.All &&
+                            //!collisionCategory.HasFlag(proxy.Fixture.CollisionCategories)
+                            (collisionCategory & proxy.Fixture.CollisionCategories) == 0)
+                        {
+                            continue;
+                        }
+
+                        RayCastInput subInput;
+                        subInput.Point1 = input.Point1;
+                        subInput.Point2 = input.Point2;
+                        subInput.MaxFraction = maxFraction;
+
+                        float value = callback(subInput, proxy);
+
+                        if (value == 0.0f)
+                        {
+                            // the client has terminated the raycast.
+                            return;
+                        }
+
+                        if (value > 0.0f)
+                        {
+                            // Update segment bounding box.
+                            maxFraction = value;
+                            Vector2 t = p1 + maxFraction * (p2 - p1);
+                            Vector2.Min(ref p1, ref t, out segmentAABB.LowerBound);
+                            Vector2.Max(ref p1, ref t, out segmentAABB.UpperBound);
+                        }
+                    }
+                    else
+                    {
+                        stack.Push(_nodes[nodeId].Child1);
+                        stack.Push(_nodes[nodeId].Child2);
                     }
                 }
-                else
-                {
-                    _raycastStack.Push(_nodes[nodeId].Child1);
-                    _raycastStack.Push(_nodes[nodeId].Child2);
-                }
+            }
+            finally
+            {
+                stack.Clear();
+                _spareRayCastStack = stack;
             }
         }
 

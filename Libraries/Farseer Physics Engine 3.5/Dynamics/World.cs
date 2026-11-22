@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2017 Kastellanos Nikolaos
+// Copyright (c) 2017 Kastellanos Nikolaos
 
 /* Original source Farseer Physics Engine:
  * Copyright (c) 2014 Ian Qvist, http://farseerphysics.codeplex.com
@@ -50,7 +50,7 @@ using FarseerPhysics.Fluids;
 namespace FarseerPhysics.Dynamics
 {    
     /// <summary>
-     /// The exception that is thrown when attempting to modify the state of the physics simulation while a physics step is running.
+     /// The exception thrown when an operation requires the world to be outside a physics step or read-only batch.
      /// </summary>
     public class WorldLockedException : InvalidOperationException
     {
@@ -98,8 +98,9 @@ namespace FarseerPhysics.Dynamics
         private Vector2 _point2;
         private List<Fixture> _testPointAllFixtures;
         private Stopwatch _watch = new Stopwatch();
-        private Func<Fixture, Vector2, Vector2, float, float> _rayCastCallback;
-        private Func<RayCastInput, FixtureProxy, float> _rayCastCallbackWrapper;
+        private int _rayCastBatchActive;
+        private bool _isStepping;
+        private bool _enabled;
 
         internal bool _worldHasNewFixture;
 
@@ -174,7 +175,6 @@ namespace FarseerPhysics.Dynamics
 #endif
 
             _queryAABBCallbackWrapper = QueryAABBCallbackWrapper;
-            _rayCastCallbackWrapper = RayCastCallbackWrapper;
 
             Fluid = new FluidSystem2(new Vector2(0, -1), 5000, 150, 150);
 
@@ -205,7 +205,8 @@ namespace FarseerPhysics.Dynamics
             return _queryAABBCallback(proxy.Fixture);
         }
 
-        private float RayCastCallbackWrapper(RayCastInput rayCastInput, FixtureProxy proxy)
+        private static float ReportRayCastHit(RayCastInput rayCastInput, FixtureProxy proxy,
+            Func<Fixture, Vector2, Vector2, float, float> callback)
         {
             Fixture fixture = proxy.Fixture;
             int index = proxy.ChildIndex;
@@ -214,7 +215,7 @@ namespace FarseerPhysics.Dynamics
             {
                 float fraction = output.Fraction;
                 Vector2 point = (1.0f - fraction) * rayCastInput.Point1 + fraction * rayCastInput.Point2;
-                return _rayCastCallback(fixture, point, output.Normal, fraction);
+                return callback(fixture, point, output.Normal, fraction);
             }
 
             return rayCastInput.MaxFraction;
@@ -927,7 +928,15 @@ namespace FarseerPhysics.Dynamics
         /// <summary>
         /// If false, the whole simulation stops. It still processes added and removed geometries.
         /// </summary>
-        public bool Enabled { get; set; }
+        public bool Enabled
+        {
+            get { return _enabled; }
+            set
+            {
+                ThrowIfRayCastBatchActive();
+                _enabled = value;
+            }
+        }
 
         public Island Island { get; private set; }
 
@@ -938,6 +947,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public virtual void Add(Body body, bool findNewContacts)
         {
+            ThrowIfRayCastBatchActive();
             if (IsLocked)
                 throw new WorldLockedException("Cannot add bodies when the World is locked.");
             if (body == null)
@@ -996,6 +1006,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public virtual void Remove(Body body)
         {
+            ThrowIfRayCastBatchActive();
             if (IsLocked)
                 throw new WorldLockedException("Cannot remove bodies when the World is locked.");
             if (body == null)
@@ -1060,6 +1071,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public void Add(Joint joint)
         {
+            ThrowIfRayCastBatchActive();
             if (IsLocked)
                 throw new WorldLockedException("Cannot add joints when the World is locked.");
             if (joint == null)
@@ -1129,6 +1141,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public void Remove(Joint joint)
         {
+            ThrowIfRayCastBatchActive();
             if (IsLocked)
                 throw new WorldLockedException("Cannot remove joints when the World is locked.");
             if (joint == null)
@@ -1231,6 +1244,7 @@ namespace FarseerPhysics.Dynamics
         /// <returns></returns>
         public void AddAsync(Body body, bool findNewContacts)
         {
+            ThrowIfRayCastBatchActive();
             if (body == null)
                 throw new ArgumentNullException("body");
 
@@ -1255,6 +1269,7 @@ namespace FarseerPhysics.Dynamics
         /// <param name="body">The body.</param>
         public void RemoveAsync(Body body)
         {
+            ThrowIfRayCastBatchActive();
             if (body == null)
                 throw new ArgumentNullException("body");
 
@@ -1280,6 +1295,7 @@ namespace FarseerPhysics.Dynamics
         /// <param name="joint">The joint.</param>
         public void AddAsync(Joint joint)
         {
+            ThrowIfRayCastBatchActive();
             if (joint == null)
                 throw new ArgumentNullException("joint");
 
@@ -1300,6 +1316,7 @@ namespace FarseerPhysics.Dynamics
         /// <param name="joint">The joint.</param>
         public void RemoveAsync(Joint joint)
         {
+            ThrowIfRayCastBatchActive();
             if (joint == null)
                 throw new ArgumentNullException("joint");
 
@@ -1320,6 +1337,7 @@ namespace FarseerPhysics.Dynamics
         /// </summary>
         public void ProcessChanges()
         {
+            ThrowIfRayCastBatchActive();
             // ProcessAddedBodies
             if (_bodyAddList.Count > 0)
             {
@@ -1405,12 +1423,26 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public void Step(float dt, ref SolverIterations iterations)
         {
-            if (IsLocked)
+            ThrowIfRayCastBatchActive();
+            if (_isStepping || IsLocked)
                 throw new WorldLockedException("Cannot take a time step when the World is locked.");
 
             if (!Enabled)
                 return;
 
+            _isStepping = true;
+            try
+            {
+                StepCore(dt, ref iterations);
+            }
+            finally
+            {
+                _isStepping = false;
+            }
+        }
+
+        private void StepCore(float dt, ref SolverIterations iterations)
+        {
             if (Settings.EnableDiagnostics)
                 _watch.Start();
 
@@ -1562,9 +1594,9 @@ namespace FarseerPhysics.Dynamics
             input.Point1 = point1;
             input.Point2 = point2;
 
-            _rayCastCallback = callback;
-            ContactManager.BroadPhase.RayCast(_rayCastCallbackWrapper, ref input, collisionCategory);
-            _rayCastCallback = null;
+            ContactManager.BroadPhase.RayCast(
+                (rayCastInput, proxy) => ReportRayCastHit(rayCastInput, proxy, callback),
+                ref input, collisionCategory);
         }
 
         public List<Fixture> RayCast(Vector2 point1, Vector2 point2)
@@ -1586,6 +1618,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public void Add(Controller controller)
         {
+            ThrowIfRayCastBatchActive();
             if (IsLocked)
                 throw new WorldLockedException("Cannot add controllers when the World is locked.");
             if (controller == null)
@@ -1608,6 +1641,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public void Remove(Controller controller)
         {
+            ThrowIfRayCastBatchActive();
             if (IsLocked)
                 throw new WorldLockedException("Cannot remove controllers when the World is locked.");
             if (controller == null)
@@ -1688,6 +1722,7 @@ namespace FarseerPhysics.Dynamics
         /// Warning: Calling this method mid-update might cause a crash.
         public void ShiftOrigin(Vector2 newOrigin)
         {
+            ThrowIfRayCastBatchActive();
             foreach (Body b in BodyList)
             {
                 b._xf.p -= newOrigin;
@@ -1709,6 +1744,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public void Clear()
         {
+            ThrowIfRayCastBatchActive();
             if (IsLocked)
                 throw new WorldLockedException("Cannot clear the World when it's locked.");
 

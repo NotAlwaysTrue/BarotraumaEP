@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2017 Kastellanos Nikolaos
+// Copyright (c) 2017 Kastellanos Nikolaos
 
 /* Original source Farseer Physics Engine:
  * Copyright (c) 2014 Ian Qvist, http://farseerphysics.codeplex.com
@@ -113,6 +113,7 @@ namespace FarseerPhysics.Dynamics
             get { return _bodyType; }
             set
             {
+                World?.ThrowIfRayCastBatchActive();
                 if (World != null && World.IsLocked)
                     throw new WorldLockedException("Cannot set body type when the World is locked.");
 
@@ -321,6 +322,7 @@ namespace FarseerPhysics.Dynamics
             get { return _enabled; }
             set
             {
+                World?.ThrowIfRayCastBatchActive();
                 if (value == _enabled)
                     return;
 
@@ -601,6 +603,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public void Add(Fixture fixture, bool resetMassData = true)
         {
+            World?.ThrowIfRayCastBatchActive();
             if (World != null && World.IsLocked)
                 throw new WorldLockedException("Cannot add fixtures to a body when the World is locked.");
             if (fixture == null)
@@ -657,6 +660,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public virtual void Remove(Fixture fixture)
         {
+            World?.ThrowIfRayCastBatchActive();
             if (World != null && World.IsLocked)
                 throw new WorldLockedException("Cannot remove fixtures from a body when the World is locked.");
             if (fixture == null)
@@ -742,6 +746,7 @@ namespace FarseerPhysics.Dynamics
         /// <exception cref="System.InvalidOperationException">Thrown when the world is Locked/Stepping.</exception>
         public void SetTransformIgnoreContacts(ref Vector2 position, float angle)
         {
+            World?.ThrowIfRayCastBatchActive();
             Debug.Assert(World != null);
             if (World == null)
                 throw new InvalidOperationException("Could not set the transform of a body (World was null - has the body been removed?)");
@@ -1274,6 +1279,7 @@ namespace FarseerPhysics.Dynamics
 
         public void RefreshCollisionCategoriesMatchBetweenFixtures()
         {
+            World?.ThrowIfRayCastBatchActive();
             if (FixtureList.Count < 2)
             {
                 if (FixtureList.Count > 0) { _collisionCategories = FixtureList[0].CollisionCategories; }               
@@ -1297,6 +1303,7 @@ namespace FarseerPhysics.Dynamics
         /// </summary>
         public void SetCollisionCategories(Category category)
         {
+            World?.ThrowIfRayCastBatchActive();
             CollisionCategoriesMatchBetweenFixtures = true;
             _collisionCategories = category;
             for (int i = 0; i < FixtureList.Count; i++)
@@ -1305,6 +1312,7 @@ namespace FarseerPhysics.Dynamics
 
         public void RefreshCollidesWithMatchesBetweenFixtures()
         {
+            World?.ThrowIfRayCastBatchActive();
             if (FixtureList.Count < 2)
             {
                 if (FixtureList.Count > 0) { _collidesWith = FixtureList[0].CollidesWith; }
@@ -1329,6 +1337,7 @@ namespace FarseerPhysics.Dynamics
         /// </summary>
         public void SetCollidesWith(Category category)
         {
+            World?.ThrowIfRayCastBatchActive();
             CollidesWithMatchesBetweenFixtures = true;
             _collidesWith = category;
             for (int i = 0; i < FixtureList.Count; i++)
@@ -1340,6 +1349,7 @@ namespace FarseerPhysics.Dynamics
         /// </summary>
         public void SetCollisionGroup(short collisionGroup)
         {
+            World?.ThrowIfRayCastBatchActive();
             for (int i = 0; i < FixtureList.Count; i++)
                 FixtureList[i].CollisionGroup = collisionGroup;
         }
@@ -1349,6 +1359,7 @@ namespace FarseerPhysics.Dynamics
         /// </summary>
         public void SetIsSensor(bool isSensor)
         {
+            World?.ThrowIfRayCastBatchActive();
             for (int i = 0; i < FixtureList.Count; i++)
                 FixtureList[i].IsSensor = isSensor;
         }
