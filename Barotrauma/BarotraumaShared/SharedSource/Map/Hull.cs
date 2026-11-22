@@ -671,6 +671,7 @@ namespace Barotrauma
         {
             base.Remove();
             HullList.Remove(this);
+            InvalidateHullGapTopology();
 
             if (Submarine == null || (!Submarine.Loading && !Submarine.Unloading))
             {
@@ -700,6 +701,7 @@ namespace Barotrauma
         {
             base.Remove();
             HullList.Remove(this);
+            InvalidateHullGapTopology();
             BallastFlora?.Remove();
 
             if (Submarine != null && !Submarine.Loading && !Submarine.Unloading)
@@ -882,6 +884,21 @@ namespace Barotrauma
 
         public override void Update(float deltaTime, Camera cam)
         {
+            UpdateBeforeWater(deltaTime, cam);
+            UpdateWater(deltaTime);
+        }
+
+        internal bool CanBatchWaterUpdate =>
+            GetType() == typeof(Hull) && BallastFlora == null &&
+#if CLIENT
+            remoteFireSources is not { Length: > 0 } &&
+#endif
+            FireSources.Count == 0 && FakeFireSources.Count == 0;
+
+        internal int ActiveWaveSamples => update ? waveY.Length : 0;
+
+        internal void UpdateBeforeWater(float deltaTime, Camera cam)
+        {
             BallastFlora?.Update(deltaTime);
             
             UpdateProjSpecific(deltaTime, cam);
@@ -930,7 +947,10 @@ namespace Barotrauma
                 aiTarget.SightRange = Submarine == null ? aiTarget.MinSightRange : MathHelper.Lerp(aiTarget.MinSightRange, aiTarget.MaxSightRange, Submarine.Velocity.Length() / 10);
                 aiTarget.SoundRange -= deltaTime * 1000.0f;
             }
-         
+        }
+
+        internal void UpdateWater(float deltaTime)
+        {
             if (!update)
             {
                 lethalPressure = 0.0f;

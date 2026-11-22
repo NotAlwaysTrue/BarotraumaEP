@@ -632,6 +632,10 @@ namespace Barotrauma
             }
         }
 
+        private static readonly HullGapUpdateBatch hullGapUpdateBatch = new HullGapUpdateBatch();
+
+        internal static void InvalidateHullGapTopology() => hullGapUpdateBatch.InvalidateTopology();
+
         /// <summary>
         /// Call Update() on every object in Entity.list
         /// </summary>
@@ -641,9 +645,12 @@ namespace Barotrauma
             var sw = new System.Diagnostics.Stopwatch();
             sw.Start();
 #endif
-            foreach (Hull hull in Hull.HullList)
+            if (!hullGapUpdateBatch.TryUpdateHulls(Hull.HullList, Gap.GapList, deltaTime, cam))
             {
-                hull.Update(deltaTime, cam);
+                foreach (Hull hull in Hull.HullList)
+                {
+                    hull.Update(deltaTime, cam);
+                }
             }
 #if CLIENT
             Hull.UpdateCheats(deltaTime, cam);
@@ -662,9 +669,12 @@ namespace Barotrauma
             //the water/air will always tend to flow through the first gap in the list,
             //which may lead to weird behavior like water draining down only through
             //one gap in a room even if there are several
-            foreach (Gap gap in Gap.GapList.OrderBy(g => Rand.Int(int.MaxValue)))
+            if (!hullGapUpdateBatch.TryUpdate(Hull.HullList, Gap.GapList, deltaTime))
             {
-                gap.Update(deltaTime, cam);
+                foreach (Gap gap in Gap.GapList.OrderBy(g => Rand.Int(int.MaxValue)))
+                {
+                    gap.Update(deltaTime, cam);
+                }
             }
 
 #if CLIENT
