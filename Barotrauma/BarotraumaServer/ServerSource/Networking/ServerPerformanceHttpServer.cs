@@ -17,6 +17,7 @@ namespace Barotrauma
     {
         public const string ContentDirectoryName = "HttpContent";
         private const HttpStatusCode RequestRejected = (HttpStatusCode)418;
+        private const string TeapotMessage = "I'm a teapot";
         private const int HistorySeconds = 300;
         private const string RecordingPath = "/api/performance/recording";
         private const string RecordingExportPath = RecordingPath + "/export";
@@ -296,9 +297,7 @@ namespace Barotrauma
                 string path = context.Request.Url?.AbsolutePath ?? "";
                 if (!enabled)
                 {
-                    response.StatusCode = (int)RequestRejected;
-                    response.ContentType = "application/json; charset=utf-8";
-                    body = Encoding.UTF8.GetBytes("{\"error\":\"panel_disabled\"}");
+                    body = RejectRequest(response, "panel_disabled");
                 }
                 else if (path is "/api/management" or "/api/management/logs")
                 {
@@ -319,9 +318,8 @@ namespace Barotrauma
                     response.ContentType = "application/json; charset=utf-8";
                     if (tokenHash != null && !IsAuthorized(context.Request.Headers["Authorization"]))
                     {
-                        response.StatusCode = (int)RequestRejected;
                         response.Headers["WWW-Authenticate"] = "Bearer";
-                        body = Encoding.UTF8.GetBytes("{\"error\":\"unauthorized\"}");
+                        body = RejectRequest(response, "unauthorized");
                     }
                     else if (path == RecordingPath)
                     {
@@ -376,6 +374,10 @@ namespace Barotrauma
                     body = Encoding.UTF8.GetBytes("Not found");
                     response.ContentType = "text/plain; charset=utf-8";
                 }
+                if (response.StatusCode == (int)RequestRejected)
+                {
+                    response.StatusDescription = TeapotMessage;
+                }
                 response.ContentLength64 = body.Length;
                 await response.OutputStream.WriteAsync(body, timeout.Token).ConfigureAwait(false);
                 response.Close();
@@ -398,6 +400,13 @@ namespace Barotrauma
             }
         }
 
+        private static byte[] RejectRequest(HttpListenerResponse response, string error)
+        {
+            response.StatusCode = (int)RequestRejected;
+            response.ContentType = "application/json; charset=utf-8";
+            return JsonSerializer.SerializeToUtf8Bytes(new { Error = error, Message = TeapotMessage }, JsonOptions);
+        }
+
         private async Task<byte[]> HandleRecordingAsync(HttpListenerContext context, CancellationToken cancellation)
         {
             var request = context.Request;
@@ -408,8 +417,7 @@ namespace Barotrauma
             }
             if (request.Headers["X-Barotrauma-Panel"] != "1")
             {
-                response.StatusCode = (int)RequestRejected;
-                return Encoding.UTF8.GetBytes("{\"error\":\"missing_panel_header\"}");
+                return RejectRequest(response, "missing_panel_header");
             }
             string mediaType = request.ContentType?.Split(';', 2)[0].Trim();
             if (!string.Equals(mediaType, "application/json", StringComparison.OrdinalIgnoreCase))
@@ -534,7 +542,10 @@ namespace Barotrauma
             (byte[] Body, bool ShutdownAfterReply) ManagementError(HttpStatusCode status, string message)
             {
                 response.StatusCode = (int)status;
-                return (JsonSerializer.SerializeToUtf8Bytes(new { ErrorMessage = message }, JsonOptions), false);
+                byte[] body = status == RequestRejected
+                    ? JsonSerializer.SerializeToUtf8Bytes(new { ErrorMessage = message, Message = TeapotMessage }, JsonOptions)
+                    : JsonSerializer.SerializeToUtf8Bytes(new { ErrorMessage = message }, JsonOptions);
+                return (body, false);
             }
         }
 
