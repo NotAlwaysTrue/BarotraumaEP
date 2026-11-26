@@ -11,6 +11,10 @@ on:
         description: Build configuration
         required: true
         type: string
+      include-workshop:
+        description: Generate publicized references for the Workshop server archive
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -55,6 +59,14 @@ jobs:
           fi
           dotnet publish "Barotrauma/Barotrauma${{ matrix.component }}/${{ matrix.platform.project }}${{ matrix.component }}.csproj" \
             "${publish_args[@]}"
+
+      - name: Generate Workshop server references
+        if: inputs.include-workshop && matrix.component == 'Server'
+        shell: bash
+        run: |
+          dotnet msbuild .github/scripts/publicize-server.proj -restore -target:PublicizeServer \
+            -p:ServerPublishDir="$RUNNER_TEMP/publish" \
+            -p:BaseIntermediateOutputPath="$RUNNER_TEMP/publicizer-obj/"
 
       - name: Upload build output
         uses: actions/upload-artifact@v4

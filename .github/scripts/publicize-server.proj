@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Luatrauma.Internal.AssemblyPublicizer.MSBuild" Version="0.1.4" PrivateAssets="all" />
+  </ItemGroup>
+
+  <Target Name="PublicizeServer">
+    <Error Condition="'$(ServerPublishDir)' == '' or !Exists('$(ServerPublishDir)')"
+           Text="ServerPublishDir must point to the dedicated server publish directory." />
+    <ItemGroup>
+      <ServerAssembly Include="$(ServerPublishDir)/BarotraumaCore.dll;$(ServerPublishDir)/DedicatedServer.dll">
+        <Destination>$(ServerPublishDir)/Publicized/%(Filename)%(Extension)</Destination>
+      </ServerAssembly>
+    </ItemGroup>
+    <Luatrauma.Internal.AssemblyPublicizer.MSBuild.PublicizeAssemblies
+      MSBuildOutputPath="$(ServerPublishDir)" Assemblies="@(ServerAssembly)" />
+  </Target>
+</Project>

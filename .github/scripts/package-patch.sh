@@ -34,6 +34,7 @@ if [[ "$variant" == workshop ]]; then
   files=(
     DedicatedServer.dll DedicatedServer.deps.json DedicatedServer.runtimeconfig.json
     BarotraumaCore.dll Farseer.NetStandard.dll
+    Publicized/BarotraumaCore.dll Publicized/DedicatedServer.dll
     Data/campaignsettings.xml Data/permissionpresets.xml
     HttpContent/index.html HttpContent/app.js HttpContent/management.js
     HttpContent/performance.js HttpContent/styles.css
@@ -42,14 +43,17 @@ if [[ "$variant" == workshop ]]; then
     windows)
       executable=DedicatedServer.exe
       files+=(hostfxr.dll hostpolicy.dll coreclr.dll steam_api64.dll)
+      exclude=(--exclude='./liblinux_steam_env.so')
       ;;
     linux)
       executable=DedicatedServer
       files+=(libhostfxr.so libhostpolicy.so libcoreclr.so libsteam_api64.so liblinux_steam_env.so)
+      exclude=(--exclude='./libsteam_api64.dylib')
       ;;
     macos)
       executable=DedicatedServer
       files+=(libhostfxr.dylib libhostpolicy.dylib libcoreclr.dylib libsteam_api64.dylib)
+      exclude=(--exclude='./liblinux_steam_env.so' --exclude='./libsteam_api64.so')
       ;;
   esac
   for file in "$executable" "${files[@]}"; do
@@ -62,7 +66,7 @@ if [[ "$variant" == workshop ]]; then
   # GitHub Actions artifact downloads reset the executable bits.
   chmod +x "$publish_dir/$executable"
   mkdir -p "$(dirname "$archive")"
-  tar -czf "$archive" --owner=0 --group=0 -C "$publish_dir" -- .
+  tar -czf "$archive" --owner=0 --group=0 "${exclude[@]}" -C "$publish_dir" -- .
   exit 0
 fi
 
