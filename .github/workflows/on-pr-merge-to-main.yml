@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       include_workshop:
-        description: Also build standalone Workshop server archives
+        description: Also build Workshop server archives with publicized references
         type: boolean
         default: false
   push:
@@ -50,6 +50,7 @@ jobs:
     with:
       target: ${{ github.sha }}
       configuration: ${{ github.event_name == 'workflow_dispatch' && 'Debug' || 'Release' }}
+      include-workshop: ${{ github.event_name == 'push' || inputs.include_workshop == true }}
 
   package:
     name: Package
