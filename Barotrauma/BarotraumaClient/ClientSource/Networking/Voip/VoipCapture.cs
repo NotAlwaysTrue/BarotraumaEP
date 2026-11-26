@@ -178,6 +178,7 @@ namespace Barotrauma.Networking
         bool prevCaptured = true;
         int captureTimer;
 
+        // This method runs on the capture thread. Avoid touching game state the main thread may be mutating.
         private void UpdateCapture(CancellationToken stopping)
         {
             Array.Copy(uncompressedBuffer, 0, prevUncompressedBuffer, 0, VoipConfig.BUFFER_SIZE);
@@ -272,13 +273,6 @@ namespace Barotrauma.Networking
                     if (allowEnqueue || captureTimer > 0)
                     {
                         LastEnqueueAudio = DateTime.Now;
-                        if (GameMain.Client?.Character != null)
-                        {
-                            var messageType = !ForceLocal && ChatMessage.CanUseRadio(GameMain.Client.Character, out _) ? ChatMessageType.Radio : ChatMessageType.Default;
-                            if (GameMain.Client.Character.IsDead) { messageType = ChatMessageType.Dead; }
-                            
-                            GameMain.Client.Character.ShowTextlessSpeechBubble(1.25f, ChatMessage.MessageColor[(int)messageType]);
-                        }
                         //encode audio and enqueue it
                         lock (buffers)
                         {

@@ -6,7 +6,6 @@ using System.Diagnostics;
 using Barotrauma.IO;
 using System.Linq;
 using System.Text;
-using System.Threading;
 using Barotrauma.Debugging;
 using Barotrauma.Networking;
 #if LINUX
@@ -85,8 +84,9 @@ namespace Barotrauma
                 Directory.SetCurrentDirectory(executableDir);
             }
             DebugConsoleCore.Init(
-                newMessage: (s, c) => DebugConsole.NewMessage(s, c),
-                log: DebugConsole.Log);
+                newMessage: (message, color) => DebugConsole.NewMessage(message, color),
+                log: DebugConsole.Log,
+                throwError: (message, exception) => DebugConsole.ThrowError(message, exception));
             Game = new GameMain(args);
 
             try
@@ -110,19 +110,6 @@ namespace Barotrauma
 
             if (GameAnalyticsManager.SendUserStatistics) { GameAnalyticsManager.ShutDown(); }
             SteamManager.ShutDown();
-
-            // Gracefully exit EOS by ticking until the session is closed
-            EosInterface.Core.CleanupAndQuit();
-            while (EosInterface.Core.IsInitialized)
-            {
-                if (Thread.CurrentThread == ThreadManager.Current?.MainThread)
-                {
-                    CrossThread.ProcessTasks();
-                }
-                EosInterface.Core.Update();
-                TaskPool.Update();
-                Thread.Sleep(16);
-            }
         }
         
         private static void OnProcessExit(object sender, EventArgs e)

@@ -2,6 +2,7 @@ using FarseerPhysics;
 using FarseerPhysics.Dynamics;
 
 #if CLIENT
+using Barotrauma.Items.Components;
 using Microsoft.Xna.Framework;
 #if DEBUG
 using Microsoft.Xna.Framework.Input;
@@ -10,7 +11,7 @@ using Microsoft.Xna.Framework.Input;
 
 namespace Barotrauma
 {
-    partial class GameScreen : Screen
+    public partial class GameScreen : Screen
     {
         public double GameTime { get; private set; }
 
@@ -33,6 +34,9 @@ namespace Barotrauma
             base.Select();
 
 #if CLIENT
+            ForceFadeToBlack = false;
+            FadeToBlackSpeed = 1f;
+
             if (Character.Controlled != null)
             {
                 cam.Position = Character.Controlled.WorldPosition;
@@ -103,15 +107,18 @@ namespace Barotrauma
 
             GameTime += deltaTime;
 
-            foreach (PhysicsBody body in PhysicsBody.List)
+            foreach (PhysicsBody body in PhysicsBody.ActiveBodyList)
             {
-                //update character (colliders) regardless if they're enabled or not, so that the draw position is updated
-                //necessary to sync the character's position even if the character is ragdolled and the collider is disabled
-                if ((body.Enabled || body.UserData is Character) && 
-                    body.BodyType != BodyType.Static) 
-                { 
-                    body.Update(); 
-                }               
+                body.Update();
+            }
+            //update character (colliders) regardless if they're enabled or not, so that the draw position is updated
+            //necessary to sync the character's position even if the character is ragdolled and the collider is disabled
+            foreach (var character in Character.CharacterList)
+            {
+                if (character.AnimController.Collider is { Enabled: false } or { BodyType: not BodyType.Static })
+                {
+                    character.AnimController.Collider.Update();
+                }
             }
             MapEntity.ClearHighlightedEntities();
 
@@ -197,6 +204,10 @@ namespace Barotrauma
                         targetPos -= screenOffset / cam.Zoom;
                     }
                 }
+                else if (Lights.LightManager.ViewTarget is Item item && item.GetComponent<Turret>() is { } turret)
+                {
+                    targetPos = turret.GetTransformedBarrelWorldPosition();
+                }
                 cam.TargetPos = targetPos;
             }
 
@@ -210,12 +221,9 @@ namespace Barotrauma
                 sub.SetPrevTransform(sub.Position);
             }
 
-            foreach (PhysicsBody body in PhysicsBody.List)
+            foreach (PhysicsBody body in PhysicsBody.ActiveBodyList)
             {
-                if (body.Enabled && body.BodyType != FarseerPhysics.BodyType.Static) 
-                { 
-                    body.SetPrevTransform(body.SimPosition, body.Rotation); 
-                }
+                body.SetPrevTransform(body.SimPosition, body.Rotation);                
             }
 
             MapEntity.UpdateAll((float)deltaTime, Cam);
@@ -250,6 +258,8 @@ namespace Barotrauma
                 DebugConsole.ThrowError(errorMsg, e);
                 GameAnalyticsManager.AddErrorEventOnce("GameScreen.Update:WorldLockedException" + e.Message, GameAnalyticsManager.ErrorSeverity.Critical, errorMsg);
             }
+
+            Character.UpdateAnimAllAfterPhysicsStep();
 
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Physics", sw.ElapsedTicks);

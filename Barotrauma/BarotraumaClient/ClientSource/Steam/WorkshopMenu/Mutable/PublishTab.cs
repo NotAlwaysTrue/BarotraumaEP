@@ -312,6 +312,11 @@ namespace Barotrauma.Steam
                 {
                     OnClicked = (button, o) =>
                     {
+                        if (!MutableWorkshopMenu.CheckIfCanSafelyUpdateFiles(localPackage.ToEnumerable()))
+                        {
+                            return false;
+                        }
+
                         //Reload the package to force hash recalculation
                         string packageName = localPackage.Name;
                         var result = ContentPackageManager.ReloadContentPackage(localPackage);
@@ -351,6 +356,11 @@ namespace Barotrauma.Steam
                     {
                         OnClicked = (button, o) =>
                         {
+                            if (!MutableWorkshopMenu.CheckIfCanSafelyUpdateFiles(workshopItem.ToEnumerable()))
+                            {
+                                return false;
+                            }
+
                             var confirmDeletion = new GUIMessageBox(
                                 headerText: TextManager.Get("WorkshopItemDelete"),
                                 text: TextManager.GetWithVariable("WorkshopItemDeleteVerification", "[itemname]", workshopItem.Title!),

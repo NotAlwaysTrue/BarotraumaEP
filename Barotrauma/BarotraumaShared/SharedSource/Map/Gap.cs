@@ -10,7 +10,7 @@ using System.Xml.Linq;
 
 namespace Barotrauma
 {
-    partial class Gap : MapEntity, ISerializableEntity
+    public partial class Gap : MapEntity, ISerializableEntity
     {
         public static List<Gap> GapList = new List<Gap>();
 
@@ -78,7 +78,7 @@ namespace Barotrauma
 
         public float Open
         {
-            get { return open; }
+            get { return IsDisabled ? 0.0f : open; }
             set
             {
                 if (float.IsNaN(value)) { return; }
@@ -342,7 +342,8 @@ namespace Barotrauma
             for (int i = 0; i < 2; i++)
             {
                 hulls[i] = Hull.FindHullUnoptimized(searchPos[i], null, false);
-                if (hulls[i] == null) hulls[i] = Hull.FindHullUnoptimized(searchPos[i], null, false, true);
+                if (hulls[i] == null) { hulls[i] = Hull.FindHullUnoptimized(searchPos[i], null, false, true); }
+
             }
 
             if (hulls[0] == null && hulls[1] == null) { return; }
@@ -360,10 +361,39 @@ namespace Barotrauma
             {
                 if (hulls[i] == null) { continue; }
                 linkedTo.Add(hulls[i]);
-                if (!hulls[i].ConnectedGaps.Contains(this)) { hulls[i].ConnectedGaps.Add(this); }
+                //if the gap is disabled, we don't want the hull to know about the gap
+                //(we should instead act as if the gap didn't even exist)
+                if (!hulls[i].ConnectedGaps.Contains(this) && !IsDisabled) 
+                {
+                    hulls[i].ConnectedGaps.Add(this); 
+                }
                 foreach (var gap in hulls[i].ConnectedGaps)
                 {
                     gap.overlappingGapsDirty = true;
+                }
+            }
+        }
+
+        public override void SetDisabled(bool disabled)
+        {
+            if (disabled != IsDisabled) { InvalidateHullGapTopology(); }
+            base.SetDisabled(disabled);
+            foreach (var linkedEntity in linkedTo)
+            {
+                if (linkedEntity is Hull hull)
+                {
+                    if (disabled)
+                    {
+                        hull.ConnectedGaps.Remove(this);
+                    }
+                    else if (!hull.ConnectedGaps.Contains(this))
+                    {
+                        hull.ConnectedGaps.Add(this);
+                    }
+                    foreach (var gap in hull.ConnectedGaps)
+                    {
+                        gap.overlappingGapsDirty = true;
+                    }
                 }
             }
         }
@@ -383,7 +413,7 @@ namespace Barotrauma
         internal int UpdatesUntilExteriorFlood => (flowForce.LengthSquared() < 1.0f ? 8 : 4) - updateCount;
 
         internal bool HasPendingFloodPropagation =>
-            open > 0.0f && linkedTo.Count == 1 &&
+            Open > 0.0f && linkedTo.Count == 1 &&
             UpdatesUntilExteriorFlood <= 1 &&
             linkedTo[0] is Hull hull && hull.LethalPressure > 0.0f && hull.WaterVolume > hull.Volume;
 
@@ -401,6 +431,8 @@ namespace Barotrauma
 
         internal float? UpdateFlow(float deltaTime, HashSet<Hull> checkedHulls, bool? atDamageDepth)
         {
+            if (IsDisabled) { return null; }
+
             Hull hull1 = linkedTo.Count < 1 ? null : linkedTo[0] as Hull;
             Hull hull2 = linkedTo.Count < 2 ? null : (Hull)linkedTo[1];
 
@@ -762,7 +794,11 @@ namespace Barotrauma
             }        
         }
 
-        private Hull GetOtherLinkedHull(Hull hull1)
+        /// <summary>
+        /// Gets the hull on the other side of this gap.
+        /// Returns null if the gap doesn't connect exactly two hulls (but eg. outside).
+        /// </summary>
+        public Hull GetOtherLinkedHull(Hull hull1)
         {
             if (linkedTo.Count != 2 || hull1 == null) { return null; }
             return (linkedTo[0] == hull1 ? linkedTo[1] : linkedTo[0]) as Hull;
@@ -968,7 +1004,8 @@ namespace Barotrauma
                 if (linked is not Hull hull) { continue; }
                 foreach (var connectedGap in hull.ConnectedGaps)
                 {
-                    if (connectedGap == this) { continue; }
+                    System.Diagnostics.Debug.Assert(!connectedGap.IsDisabled, $"A disabled gap was present in {nameof(hull.ConnectedGaps)}");
+                    if (connectedGap == this || connectedGap.IsDisabled) { continue; }
                     if (connectedGap.IsRoomToRoom != IsRoomToRoom) { continue; }
                     //let the "more open" gap reduce this gap's flow rate
                     //or if they're both equally open, let the one that was created first handle it
@@ -1073,6 +1110,7 @@ namespace Barotrauma
                 Layer = element.GetAttributeString(nameof(Layer), null)
             };
             g.HiddenInGame = element.GetAttributeBool(nameof(HiddenInGame), g.HiddenInGame);
+            g.IsDisabled = element.GetAttributeBool(nameof(IsDisabled), g.IsDisabled);
             return g;
         }
 
@@ -1084,6 +1122,7 @@ namespace Barotrauma
                 new XAttribute("ID", ID),
                 new XAttribute("horizontal", IsHorizontal ? "true" : "false"),
                 new XAttribute(nameof(HiddenInGame), HiddenInGame),
+                new XAttribute(nameof(IsDisabled), IsDisabled),
                 new XAttribute(nameof(Layer), Layer ?? string.Empty));
 
             element.Add(new XAttribute("rect",
@@ -1095,5 +1134,7 @@ namespace Barotrauma
 
             return element;
         }
+        
+        public bool CanFitThrough(float width) => Size > width;
     }
 }

@@ -521,7 +521,7 @@ namespace Barotrauma
             if (update == null || (update.ServerName != null && (!IsValidText(update.ServerName, NetConfig.ServerNameMaxLength)
                 || string.IsNullOrWhiteSpace(update.ServerName) || update.ServerName.Any(char.IsControl)))
                 || (update.Message != null && !IsValidText(update.Message, NetConfig.ServerMessageMaxLength))
-                || update.MaxPlayers is < 1 or > NetConfig.MaxPlayers || update.TickRate is < 1 or > 60)
+                || update.MaxPlayers < 1 || update.MaxPlayers > NetConfig.MaxPlayers || update.TickRate is < 1 or > 60)
             {
                 return Failure(HttpStatusCode.BadRequest, "Invalid server name, message, player limit or network tick rate.");
             }

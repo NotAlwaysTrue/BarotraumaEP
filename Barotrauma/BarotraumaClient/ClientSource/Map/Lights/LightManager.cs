@@ -9,7 +9,7 @@ using System.Threading;
 
 namespace Barotrauma.Lights
 {
-    class LightManager
+    public class LightManager
     {
         /// <summary>
         /// How many light sources are allowed to recalculate their light volumes per frame. 
@@ -23,7 +23,7 @@ namespace Barotrauma.Lights
         /// </summary>
         const float ObstructLightsBehindCharactersZoomThreshold = 0.5f;
 
-        private Queue<RayCastTask> pendingRayCasts = new Queue<RayCastTask>();
+        private readonly Queue<RayCastTask> pendingRayCasts = new Queue<RayCastTask>();
 
         public static Entity ViewTarget { get; set; }
 
@@ -219,9 +219,9 @@ namespace Barotrauma.Lights
             {
                 lock (mutex)
                 {
-                    while (pendingRayCasts.Count > 0 && !stopping.IsCancellationRequested)
+                    while (!stopping.IsCancellationRequested && pendingRayCasts.TryDequeue(out RayCastTask task))
                     {
-                        pendingRayCasts.Dequeue().Calculate();
+                        task.Calculate();
                     }
                 }
                 stopping.WaitHandle.WaitOne(10);
@@ -354,6 +354,10 @@ namespace Barotrauma.Lights
                 light.DrawSprite(spriteBatch, cam);
             }
             GameMain.ParticleManager.Draw(spriteBatch, true, null, Particles.ParticleBlendState.Additive);
+            foreach (var itemComponent in ItemComponent.DrawInLightMap)
+            {
+                itemComponent.Draw(spriteBatch, editing: false);
+            }
             spriteBatch.End();
 
             //draw a black rectangle on hulls to hide background lights behind subs
@@ -568,6 +572,11 @@ namespace Barotrauma.Lights
                 {
                     highlightedEntities.Add(Character.Controlled.FocusedCharacter);
                 }
+
+                highlightedEntities.AddRange(Character.Controlled.HeldItems
+                    .SelectMany(static item => item.Components)
+                    .SelectMany(static comp => comp.GetEquippedItemHighlights(Character.Controlled)));
+
                 foreach (MapEntity me in MapEntity.HighlightedEntities)
                 {
                     if (me is Item item && item != Character.Controlled.FocusedItem)
@@ -636,12 +645,13 @@ namespace Barotrauma.Lights
             {
                 if (highlighted is Item item)
                 {
-                    SolidColorEffect.Parameters["blurDistance"].SetValue(0.02f);
-                    item.Draw(spriteBatch, false, true);
+                    const float ItemBlurDistance = 0.02f;
+                    SolidColorEffect.Parameters["blurDistance"].SetValue(ItemBlurDistance);
+                    item.Draw(spriteBatch, editing: false, back: true, highlightBlurDistance: ItemBlurDistance);
                 }
                 else if (highlighted is Character character)
                 {
-                    SolidColorEffect.Parameters["blurDistance"].SetValue(0.05f);
+                    SolidColorEffect.Parameters["blurDistance"].SetValue(0.0f);
                     character.Draw(spriteBatch, cam);
                 }
             }
@@ -658,6 +668,23 @@ namespace Barotrauma.Lights
             DeformableSprite.Effect.CurrentTechnique = DeformableSprite.Effect.Techniques["DeformShader"];
 
             return true;
+        }
+
+        /// <summary>
+        /// Sets the blur distance of the highlight blur pass for the given sprite.
+        /// The blur distance is relative to the whole texture, so on a small sprite in a large atlas it can exceed the size of the sprite,
+        /// making the blur fill the whole sprite rectangle (e.g. rotating squares on the gears of a running deconstructor).
+        /// Limits the distance to 10% of the sprite's smaller side.
+        /// </summary>
+        public void SetHighlightBlurDistance(Sprite sprite, float maxBlurDistance)
+        {
+            float blurDistance = maxBlurDistance;
+            if (sprite?.Texture is Texture2D texture)
+            {
+                Rectangle sourceRect = sprite.SourceRect;
+                blurDistance = Math.Min(maxBlurDistance, 0.1f * Math.Min(sourceRect.Width, sourceRect.Height) / Math.Max(texture.Width, texture.Height));
+            }
+            SolidColorEffect.Parameters["blurDistance"].SetValue(blurDistance);
         }
 
         private readonly Dictionary<Hull, Rectangle> visibleHulls = new Dictionary<Hull, Rectangle>();
@@ -739,6 +766,12 @@ namespace Barotrauma.Lights
                 {
                     pos = head.body.DrawPosition;
                     centeredOnHead = true;
+                }
+                else if (ViewTarget is Item item && item.GetComponent<Turret>() is { } turret)
+                {
+                    //offset by how much the barrel pos is offset from the item's position
+                    //(don't use the world pos directly, we want to use the interpolated draw positions here)
+                    pos += turret.GetTransformedBarrelWorldPosition() - item.WorldPosition;
                 }
 
                 Rectangle camView = new Rectangle(cam.WorldView.X, cam.WorldView.Y - cam.WorldView.Height, cam.WorldView.Width, cam.WorldView.Height);
@@ -834,6 +867,12 @@ namespace Barotrauma.Lights
             activeLights.Clear();
             activeShadowCastingLights.Clear();
             lights.Clear();
+        }
+
+        public void CleanUpReferences()
+        {
+            visibleHulls.Clear();
+            highlightedEntities.Clear();
         }
     }
 
