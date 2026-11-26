@@ -2,6 +2,11 @@ name: OnPRMergetoMain
 
 on:
   workflow_dispatch:
+    inputs:
+      include_workshop:
+        description: Also build standalone Workshop server archives
+        type: boolean
+        default: false
   pull_request:
     branches: [master]
     types: [closed]
@@ -25,7 +30,7 @@ jobs:
     with:
       target: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
       configuration: ${{ github.event_name == 'workflow_dispatch' && 'Debug' || 'Release' }}
-      include-workshop: ${{ github.event_name == 'pull_request' && github.event.pull_request.merged == true }}
+      include-workshop: ${{ github.event.pull_request.merged == true || inputs.include_workshop == true }}
 
   release:
     name: Release
