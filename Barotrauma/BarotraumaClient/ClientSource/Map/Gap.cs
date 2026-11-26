@@ -50,6 +50,7 @@ namespace Barotrauma
 
             Color clr = (open == 0.0f) ? GUIStyle.Red : Color.Cyan;
             if (IsHighlighted) { clr = Color.Gold; }
+            if (IsHidden) { clr = Color.Lerp(clr, Color.TransparentBlack, 0.25f); }
 
             GUI.DrawRectangle(
                 sb, new Rectangle(WorldRect.X, -WorldRect.Y, rect.Width, rect.Height),
@@ -131,10 +132,8 @@ namespace Barotrauma
             }
         }
 
-        partial void EmitParticles(float deltaTime)
+        internal void EmitParticles(float deltaTime, float targetWaterVolume)
         {
-            if (flowTargetHull == null) { return; }
-
             if (linkedTo.Count == 2 && linkedTo[0] is Hull hull1 && linkedTo[1] is Hull hull2)
             {
                 //no flow particles between linked hulls (= rooms consisting of multiple hulls)
@@ -180,7 +179,7 @@ namespace Barotrauma
                             MathHelper.Clamp(flowForce.X, -5000.0f, 5000.0f) * Rand.Range(0.5f, 0.7f),
                         flowForce.Y * Rand.Range(0.5f, 0.7f));
 
-                        if (flowTargetHull.WaterVolume < flowTargetHull.Volume * 0.95f)
+                        if (targetWaterVolume < flowTargetHull.Volume * 0.95f)
                         {
                             var particle = GameMain.ParticleManager.CreateParticle(
                                 "watersplash",
@@ -197,7 +196,7 @@ namespace Barotrauma
                             }
                         }
 
-                        if (Math.Abs(flowForce.X) > 300.0f && flowTargetHull.WaterVolume > flowTargetHull.Volume * 0.1f)
+                        if (Math.Abs(flowForce.X) > 300.0f && targetWaterVolume > flowTargetHull.Volume * 0.1f)
                         {
                             pos.X += Math.Sign(flowForce.X) * 10.0f;
                             if (rect.Height < 32)
@@ -233,7 +232,7 @@ namespace Barotrauma
                             lerpedFlowForce.X * Rand.Range(0.5f, 0.7f),
                             MathHelper.Clamp(lerpedFlowForce.Y, -500.0f, 1000.0f) * Rand.Range(0.5f, 0.7f));
 
-                        if (flowTargetHull.WaterVolume < flowTargetHull.Volume * 0.95f)
+                        if (targetWaterVolume < flowTargetHull.Volume * 0.95f)
                         {
                             var splash = GameMain.ParticleManager.CreateParticle(
                                 "watersplash",
@@ -249,7 +248,7 @@ namespace Barotrauma
                                 CreateWaterSpatter();
                             }
                         }
-                        if (Math.Abs(flowForce.Y) > 190.0f && Rand.Range(0.0f, 1.0f) < 0.3f && flowTargetHull.WaterVolume > flowTargetHull.Volume * 0.1f)
+                        if (Math.Abs(flowForce.Y) > 190.0f && Rand.Range(0.0f, 1.0f) < 0.3f && targetWaterVolume > flowTargetHull.Volume * 0.1f)
                         {
                             GameMain.ParticleManager.CreateParticle(
                                 "bubbles",
@@ -276,7 +275,7 @@ namespace Barotrauma
                         velocity.X *= Rand.Range(1.0f, 3.0f);
                     }
 
-                    if (flowTargetHull.WaterVolume < flowTargetHull.Volume)
+                    if (targetWaterVolume < flowTargetHull.Volume)
                     {
                         GameMain.ParticleManager.CreateParticle(
                             Rand.Range(0.0f, open) < 0.05f ? "waterdrop" : "watersplash",

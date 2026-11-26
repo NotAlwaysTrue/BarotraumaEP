@@ -1,8 +1,7 @@
-﻿using NVorbis;
+using NVorbis;
 using OpenAL;
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 
 namespace Barotrauma.Sounds
 {
@@ -38,10 +37,9 @@ namespace Barotrauma.Sounds
             Loading = true;
             TaskPool.Add(
                 $"LoadSamples {filename}",
-                LoadSamples(reader),
+                ThreadManager.Instance.Process.RunBackgroundValue("Ogg decode", _ => LoadSamples(reader)),
                 t =>
                 {
-                    reader.Dispose();
                     if (!t.TryGetResult(out TaskResult result))
                     {
                         return;
@@ -60,8 +58,9 @@ namespace Barotrauma.Sounds
             short[] MuffleBuffer,
             List<float> PlaybackAmplitude);
 
-        private static async Task<TaskResult> LoadSamples(VorbisReader reader)
+        private static TaskResult LoadSamples(VorbisReader decoder)
         {
+            using var reader = decoder;
             reader.DecodedPosition = 0;
 
             int bufferSize = (int)reader.TotalSamples * reader.Channels;
@@ -70,7 +69,7 @@ namespace Barotrauma.Sounds
             var sampleBuffer = new short[bufferSize];
             var muffledBuffer = new short[bufferSize];
 
-            int readSamples = await Task.Run(() =>  reader.ReadSamples(floatBuffer, 0, bufferSize));
+            int readSamples = reader.ReadSamples(floatBuffer, 0, bufferSize);
 
             var playbackAmplitude = new List<float>();
             for (int i = 0; i < bufferSize; i += reader.Channels * AMPLITUDE_SAMPLE_COUNT)
@@ -151,7 +150,8 @@ namespace Barotrauma.Sounds
             int alError = Al.GetError();
             if (alError != Al.NoError)
             {
-                throw new Exception("Failed to set regular buffer data for non-streamed audio! " + Al.GetErrorString(alError));
+                OnBufferDataFailed("regular", alError);
+                return;
             }
 
             Al.BufferData(buffers.AlMuffledBuffer, ALFormat, muffleBuffer,
@@ -160,7 +160,17 @@ namespace Barotrauma.Sounds
             alError = Al.GetError();
             if (alError != Al.NoError)
             {
-                throw new Exception("Failed to set muffled buffer data for non-streamed audio! " + Al.GetErrorString(alError));
+                OnBufferDataFailed("muffled", alError);
+                return;
+            }
+
+            void OnBufferDataFailed(string bufferType, int error)
+            {
+                // Buffers taken from another sound may still be attached to its source for a moment, as OpenAL implementations
+                // (such as Apple's) can stop sources asynchronously.
+                // So we return the buffers to the pool and skip the sound instead of crashing.
+                DebugConsole.AddWarning($"Failed to set {bufferType} buffer data for non-streamed audio ({Filename})! {Al.GetErrorString(error)}");
+                buffers.Dispose();
             }
         }
 

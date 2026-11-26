@@ -1,57 +1,42 @@
-﻿//#define RUN_PHYSICS_IN_SEPARATE_THREAD
-
-using Microsoft.Xna.Framework;
-using System.Threading;
-using FarseerPhysics.Dynamics;
 using FarseerPhysics;
+using FarseerPhysics.Dynamics;
 
-
-#if DEBUG && CLIENT
-using System;
-using Barotrauma.Sounds;
+#if CLIENT
+using Barotrauma.Items.Components;
+using Microsoft.Xna.Framework;
+#if DEBUG
 using Microsoft.Xna.Framework.Input;
+#endif
 #endif
 
 namespace Barotrauma
 {
-    partial class GameScreen : Screen
+    public partial class GameScreen : Screen
     {
-        private object updateLock = new object();
-        private double physicsTime;
+        public double GameTime { get; private set; }
 
 #if CLIENT
         private readonly Camera cam;
 
-        public override Camera Cam
-        {
-            get { return cam; }
-        }
-#elif SERVER
-        public override Camera Cam
-        {
-            get { return Camera.Instance; }
-        }
-#endif
+        public override Camera Cam => cam;
 
-        public double GameTime
-        {
-            get;
-            private set;
-        }
-        
         public GameScreen()
         {
-#if CLIENT
             cam = new Camera();
             cam.Translate(new Vector2(-10.0f, 50.0f));
-#endif
         }
+#elif SERVER
+        public override Camera Cam => Camera.Instance;
+#endif
 
         public override void Select()
         {
             base.Select();
 
 #if CLIENT
+            ForceFadeToBlack = false;
+            FadeToBlackSpeed = 1f;
+
             if (Character.Controlled != null)
             {
                 cam.Position = Character.Controlled.WorldPosition;
@@ -64,19 +49,9 @@ namespace Barotrauma
             }
             GameMain.GameSession?.CrewManager?.ResetCrewListOpenState();
             ChatBox.ResetChatBoxOpenState();
-            
 #endif
 
             MapEntity.ClearHighlightedEntities();
-
-#if RUN_PHYSICS_IN_SEPARATE_THREAD
-            var physicsThread = new Thread(ExecutePhysics)
-            {
-                Name = "Physics thread",
-                IsBackground = true
-            };
-            physicsThread.Start();
-#endif
         }
 
         public override void Deselect()
@@ -105,14 +80,8 @@ namespace Barotrauma
         /// </summary>
         public override void Update(double deltaTime)
         {
-#if RUN_PHYSICS_IN_SEPARATE_THREAD
-            physicsTime += deltaTime;
-            lock (updateLock)
-            { 
-#endif
-
-
-#if DEBUG && CLIENT
+#if CLIENT
+#if DEBUG
             if (GameMain.GameSession != null && !DebugConsole.IsOpen && GUI.KeyboardDispatcher.Subscriber == null)
             {
                 if (GameMain.GameSession.Level != null && GameMain.GameSession.Submarine != null)
@@ -133,47 +102,49 @@ namespace Barotrauma
             }
 #endif
 
-#if CLIENT
             GameMain.LightManager?.Update((float)deltaTime);
 #endif
 
             GameTime += deltaTime;
 
-            foreach (PhysicsBody body in PhysicsBody.List)
+            foreach (PhysicsBody body in PhysicsBody.ActiveBodyList)
             {
-                //update character (colliders) regardless if they're enabled or not, so that the draw position is updated
-                //necessary to sync the character's position even if the character is ragdolled and the collider is disabled
-                if ((body.Enabled || body.UserData is Character) && 
-                    body.BodyType != BodyType.Static) 
-                { 
-                    body.Update(); 
-                }               
+                body.Update();
+            }
+            //update character (colliders) regardless if they're enabled or not, so that the draw position is updated
+            //necessary to sync the character's position even if the character is ragdolled and the collider is disabled
+            foreach (var character in Character.CharacterList)
+            {
+                if (character.AnimController.Collider is { Enabled: false } or { BodyType: not BodyType.Static })
+                {
+                    character.AnimController.Collider.Update();
+                }
             }
             MapEntity.ClearHighlightedEntities();
 
-#if CLIENT
             var sw = new System.Diagnostics.Stopwatch();
             sw.Start();
-#endif
 
             GameMain.GameSession?.Update((float)deltaTime);
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:GameSession", sw.ElapsedTicks);
             sw.Restart();
 
+#if CLIENT
             GameMain.ParticleManager.Update((float)deltaTime); 
             
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Particles", sw.ElapsedTicks);
-            sw.Restart();  
+            sw.Restart();
+#endif
 
-            if (Level.Loaded != null) Level.Loaded.Update((float)deltaTime, cam);
+            Level.Loaded?.Update((float)deltaTime, Cam);
 
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Level", sw.ElapsedTicks);
 
+#if CLIENT
             if (Character.Controlled is { } controlled)
             {
                 if (controlled.SelectedItem != null && controlled.CanInteractWith(controlled.SelectedItem))
@@ -191,29 +162,22 @@ namespace Barotrauma
                     }
                 }
             }
+#endif
 
             sw.Restart();
+            Character.UpdateAll((float)deltaTime, Cam);
 
-            Character.UpdateAll((float)deltaTime, cam);
-#elif SERVER
-            if (Level.Loaded != null) Level.Loaded.Update((float)deltaTime, Camera.Instance);
-            Character.UpdateAll((float)deltaTime, Camera.Instance);
-#endif
-
-
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Character", sw.ElapsedTicks);
-            sw.Restart(); 
-#endif
+            sw.Restart();
 
             StatusEffect.UpdateAll((float)deltaTime);
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:StatusEffects", sw.ElapsedTicks);
             sw.Restart(); 
 
+#if CLIENT
             if (Character.Controlled != null && 
                 Lights.LightManager.ViewTarget != null)
             {
@@ -240,6 +204,10 @@ namespace Barotrauma
                         targetPos -= screenOffset / cam.Zoom;
                     }
                 }
+                else if (Lights.LightManager.ViewTarget is Item item && item.GetComponent<Turret>() is { } turret)
+                {
+                    targetPos = turret.GetTransformedBarrelWorldPosition();
+                }
                 cam.TargetPos = targetPos;
             }
 
@@ -253,51 +221,33 @@ namespace Barotrauma
                 sub.SetPrevTransform(sub.Position);
             }
 
-            foreach (PhysicsBody body in PhysicsBody.List)
+            foreach (PhysicsBody body in PhysicsBody.ActiveBodyList)
             {
-                if (body.Enabled && body.BodyType != FarseerPhysics.BodyType.Static) 
-                { 
-                    body.SetPrevTransform(body.SimPosition, body.Rotation); 
-                }
+                body.SetPrevTransform(body.SimPosition, body.Rotation);                
             }
 
-#if CLIENT
-            MapEntity.UpdateAll((float)deltaTime, cam);
-#elif SERVER
-            MapEntity.UpdateAll((float)deltaTime, Camera.Instance);
-#endif
+            MapEntity.UpdateAll((float)deltaTime, Cam);
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:MapEntity", sw.ElapsedTicks);
-            sw.Restart(); 
-#endif
+            sw.Restart();
             Character.UpdateAnimAll((float)deltaTime);
 
-#if CLIENT
-            Ragdoll.UpdateAll((float)deltaTime, cam);
-#elif SERVER
-            Ragdoll.UpdateAll((float)deltaTime, Camera.Instance);
-#endif
+            Ragdoll.UpdateAll((float)deltaTime, Cam);
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Ragdolls", sw.ElapsedTicks);
-            sw.Restart(); 
-#endif
+            sw.Restart();
 
             foreach (Submarine sub in Submarine.Loaded)
             {
                 sub.Update((float)deltaTime);
             }
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Submarine", sw.ElapsedTicks);
             sw.Restart();
-#endif
 
-#if !RUN_PHYSICS_IN_SEPARATE_THREAD
             try
             {
                 GameMain.World.Step((float)Timing.Step);
@@ -308,35 +258,14 @@ namespace Barotrauma
                 DebugConsole.ThrowError(errorMsg, e);
                 GameAnalyticsManager.AddErrorEventOnce("GameScreen.Update:WorldLockedException" + e.Message, GameAnalyticsManager.ErrorSeverity.Critical, errorMsg);
             }
-#endif
 
+            Character.UpdateAnimAllAfterPhysicsStep();
 
-#if CLIENT
             sw.Stop();
             GameMain.PerformanceCounter.AddElapsedTicks("Update:Physics", sw.ElapsedTicks);
-#endif
             UpdateProjSpecific(deltaTime);
-
-#if RUN_PHYSICS_IN_SEPARATE_THREAD
-            }
-#endif
         }
 
         partial void UpdateProjSpecific(double deltaTime);
-
-        private void ExecutePhysics()
-        {
-            while (true)
-            {
-                while (physicsTime >= Timing.Step)
-                {
-                    lock (updateLock)
-                    {
-                        GameMain.World.Step((float)Timing.Step);
-                        physicsTime -= Timing.Step;
-                    }
-                }
-            }
-        }
     }
 }

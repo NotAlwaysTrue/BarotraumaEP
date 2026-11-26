@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 using Barotrauma.IO;
 using System;
 using System.Collections.Generic;
@@ -113,10 +113,10 @@ namespace Barotrauma.Steam
 
                 private static Task<WorkshopItemSet>? currentBatch = null;
 
-                private static async Task<WorkshopItemSet> PrepareNewBatch()
+                private static async Task<WorkshopItemSet> PrepareNewBatch(CancellationToken stopping)
                 {
                     // Wait for a bunch of requests to be made
-                    await Task.Delay(delayAfterNewRequest);
+                    await Task.Delay(delayAfterNewRequest, stopping);
                     
                     Task<WorkshopItemSet> queryTask;
                     lock (mutex)
@@ -138,7 +138,7 @@ namespace Barotrauma.Steam
                         currentBatch = null;
                     }
 
-                    return await queryTask;
+                    return await queryTask.WaitAsync(stopping);
                 }
                 
                 public static async Task<Option<Steamworks.Ugc.Item>> MakeRequest(UInt64 id)
@@ -150,7 +150,7 @@ namespace Barotrauma.Steam
                         if (currentBatch is not { IsCompleted: false })
                         {
                             // There is no currently pending batch, start a new one
-                            currentBatch = Task.Run(PrepareNewBatch);
+                            currentBatch = ThreadManager.Instance.Process.RunBackground("Workshop batch", PrepareNewBatch);
                         }
                         ourTask = currentBatch;
                     }

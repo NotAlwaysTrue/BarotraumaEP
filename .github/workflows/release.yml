@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: Commit to release
+        required: true
+        type: string
+      tag:
+        description: Release tag
+        required: true
+        type: string
+      prerelease:
+        description: Whether this is a prerelease
+        required: true
+        type: boolean
+      description:
+        description: Build description for the release notes
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out build commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target }}
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BarotraumaEP-*
+          path: packages
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_SHA: ${{ inputs.target }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_DESCRIPTION: ${{ inputs.description }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes="$RELEASE_DESCRIPTION Archives are overlay patches for a matching game installation; keep the existing launchers and .NET runtime. For macOS clients, extract into Barotrauma.app/Contents/MacOS; for dedicated servers, use the directory containing DedicatedServer. BarotraumaEP is a modified version of Barotrauma; the original game and its assets belong to their respective owners."
+          git tag -f "$RELEASE_TAG" "$BUILD_SHA"
+          git push origin "refs/tags/$RELEASE_TAG" --force
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" packages/*.tar.gz --clobber
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes "$notes" --prerelease="$PRERELEASE"
+          else
+            gh release create "$RELEASE_TAG" packages/*.tar.gz --title "$RELEASE_TAG" --notes "$notes" --prerelease="$PRERELEASE"
+          fi

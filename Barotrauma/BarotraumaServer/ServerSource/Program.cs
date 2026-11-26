@@ -1,4 +1,4 @@
-﻿#region Using Statements
+#region Using Statements
 
 using Barotrauma.Steam;
 using System;
@@ -6,7 +6,6 @@ using System.Diagnostics;
 using Barotrauma.IO;
 using System.Linq;
 using System.Text;
-using System.Threading;
 using Barotrauma.Debugging;
 using Barotrauma.Networking;
 #if LINUX
@@ -50,6 +49,7 @@ namespace Barotrauma
         [STAThread]
         static void Main(string[] args)
         {
+            using var threadManager = ThreadManager.Initialize();
             AppDomain currentDomain = AppDomain.CurrentDomain;
             currentDomain.ProcessExit += OnProcessExit;
 #if !DEBUG
@@ -76,14 +76,29 @@ namespace Barotrauma
             }
 
             string executableDir = Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location);
-            Directory.SetCurrentDirectory(executableDir);
+            // Workshop deployments carry the marker file used by LuaCsForBarotrauma and
+            // must keep the launcher's working directory, which is the installed game
+            // directory. Standard deployments keep switching to the executable directory.
+            if (!File.Exists(Path.Combine(executableDir, "workshop")))
+            {
+                Directory.SetCurrentDirectory(executableDir);
+            }
             DebugConsoleCore.Init(
-                newMessage: (s, c) => DebugConsole.NewMessage(s, c),
-                log: DebugConsole.Log);
+                newMessage: (message, color) => DebugConsole.NewMessage(message, color),
+                log: DebugConsole.Log,
+                throwError: (message, exception) => DebugConsole.ThrowError(message, exception));
             Game = new GameMain(args);
 
-            Game.Run();
-            ShutDown();
+            try
+            {
+                Game.Run();
+            }
+            finally
+            {
+                Game.StopPerformanceHttp();
+                ChildServerRelay.ShutDown();
+                ShutDown();
+            }
         }
 
         private static bool hasShutDown = false;
@@ -91,18 +106,10 @@ namespace Barotrauma
         {
             if (hasShutDown) { return; }
             hasShutDown = true;
+            Game?.StopPerformanceHttp();
 
             if (GameAnalyticsManager.SendUserStatistics) { GameAnalyticsManager.ShutDown(); }
             SteamManager.ShutDown();
-
-            // Gracefully exit EOS by ticking until the session is closed
-            EosInterface.Core.CleanupAndQuit();
-            while (EosInterface.Core.IsInitialized)
-            {
-                EosInterface.Core.Update();
-                TaskPool.Update();
-                Thread.Sleep(16);
-            }
         }
         
         private static void OnProcessExit(object sender, EventArgs e)

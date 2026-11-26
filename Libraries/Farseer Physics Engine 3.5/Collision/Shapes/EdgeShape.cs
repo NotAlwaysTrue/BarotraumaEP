@@ -141,6 +141,12 @@ namespace FarseerPhysics.Collision.Shapes
 
         public override bool RayCast(out RayCastOutput output, ref RayCastInput input, ref Transform transform, int childIndex)
         {
+            return RayCastSegment(out output, ref input, ref transform, _vertex1, _vertex2);
+        }
+
+        internal static bool RayCastSegment(out RayCastOutput output, ref RayCastInput input, ref Transform transform,
+            Vector2 v1, Vector2 v2)
+        {
             // p = p1 + t * d
             // v = v1 + s * e
             // p1 + t * d = v1 + s * e
@@ -153,8 +159,6 @@ namespace FarseerPhysics.Collision.Shapes
             Vector2 p2 = Complex.Divide(input.Point2 - transform.p, ref transform.q);
             Vector2 d = p2 - p1;
 
-            Vector2 v1 = _vertex1;
-            Vector2 v2 = _vertex2;
             Vector2 e = v2 - v1;
             Vector2 normal = new Vector2(e.Y, -e.X); //TODO: Could possibly cache the normal.
             normal.Normalize();

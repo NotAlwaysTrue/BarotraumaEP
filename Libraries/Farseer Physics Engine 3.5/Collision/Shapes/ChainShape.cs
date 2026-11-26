@@ -46,7 +46,6 @@ namespace FarseerPhysics.Collision.Shapes
         public Vertices Vertices;
         private Vector2 _prevVertex, _nextVertex;
         private bool _hasPrevVertex, _hasNextVertex;
-        private static EdgeShape _edgeShape = new EdgeShape();
 
         /// <summary>
         /// Constructor for ChainShape. By default have 0 in density.
@@ -195,10 +194,7 @@ namespace FarseerPhysics.Collision.Shapes
                 i2 = 0;
             }
 
-            _edgeShape.Vertex1 = Vertices[i1];
-            _edgeShape.Vertex2 = Vertices[i2];
-
-            return _edgeShape.RayCast(out output, ref input, ref transform, 0);
+            return EdgeShape.RayCastSegment(out output, ref input, ref transform, Vertices[i1], Vertices[i2]);
         }
 
         public override void ComputeAABB(out AABB aabb, ref Transform transform, int childIndex)

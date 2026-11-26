@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2017 Kastellanos Nikolaos
+// Copyright (c) 2017 Kastellanos Nikolaos
 
 /* Original source Farseer Physics Engine:
  * Copyright (c) 2014 Ian Qvist, http://farseerphysics.codeplex.com
@@ -113,6 +113,7 @@ namespace FarseerPhysics.Dynamics
         {
             set
             {
+                Body?.World?.ThrowIfRayCastBatchActive();
                 if (_collisionGroup == value)
                     return;
 
@@ -134,6 +135,7 @@ namespace FarseerPhysics.Dynamics
 
             set
             {
+                Body?.World?.ThrowIfRayCastBatchActive();
                 if (_collidesWith == value)
                     return;
 
@@ -157,6 +159,7 @@ namespace FarseerPhysics.Dynamics
 
             internal set
             {
+                Body?.World?.ThrowIfRayCastBatchActive();
                 if (_collisionCategories == value)
                     return;
 
@@ -184,6 +187,7 @@ namespace FarseerPhysics.Dynamics
             get { return _isSensor; }
             set
             {
+                Body?.World?.ThrowIfRayCastBatchActive();
                 if (Body != null)
                     Body.Awake = true;
 

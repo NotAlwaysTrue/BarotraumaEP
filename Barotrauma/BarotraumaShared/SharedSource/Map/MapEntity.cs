@@ -5,12 +5,11 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Reflection;
 using System.Xml.Linq;
 
 namespace Barotrauma
 {
-    abstract partial class MapEntity : Entity, ISpatialEntity
+    public abstract partial class MapEntity : Entity, ISpatialEntity
     {
         public readonly static List<MapEntity> MapEntityList = new List<MapEntity>();
 
@@ -47,8 +46,39 @@ namespace Barotrauma
 
         public readonly List<MapEntity> linkedTo = new List<MapEntity>();
 
-        public bool FlippedX { get; protected set; }
-        public bool FlippedY { get; protected set; }
+        protected bool flippedX;
+        protected bool flippedY;
+
+        public bool FlippedX
+        {
+            get => flippedX;
+            set
+            {
+                if (value && !FlippedX)
+                {
+                    FlipX(relativeToSub: false);
+                }
+                else if (!value && FlippedX)
+                {
+                    FlipX(relativeToSub: false);
+                }
+            }
+        }
+        public bool FlippedY
+        {
+            get => flippedY;
+            set
+            {
+                if (value && !FlippedY)
+                {
+                    FlipY(relativeToSub: false);
+                }
+                else if (!value && FlippedY)
+                {
+                    FlipY(relativeToSub: false);
+                }
+            }
+        }
 
         public bool ShouldBeSaved = true;
 
@@ -132,10 +162,7 @@ namespace Barotrauma
             }
         }
 
-        public virtual bool Linkable
-        {
-            get { return false; }
-        }
+        public virtual bool Linkable => Prefab.Linkable;
 
         public IEnumerable<Identifier> AllowedLinks => Prefab == null ? Enumerable.Empty<Identifier>() : Prefab.AllowedLinks;
 
@@ -198,22 +225,29 @@ namespace Barotrauma
         [Serialize(1f, IsPropertySaveable.Yes), Editable(0.01f, 10f, DecimalCount = 3, ValueStep = 0.1f)]
         public virtual float Scale { get; set; } = 1;
 
+        /// <summary>
+        /// The entity will be invisible in-game. Note that this differs from <see cref="IsDisabled"/>: 
+        /// the entity is still updated, and e.g. items' effects will still be executed.
+        /// </summary>
         [Editable, Serialize(false, IsPropertySaveable.Yes)]
         public bool HiddenInGame
         {
             get;
             set;
         }
+        
+        public bool IsHiddenByLinkedEntity;
 
         /// <summary>
-        /// Is the layer this entity is in currently hidden? If it is, the entity is not updated and should do nothing.
+        /// Disabled entities are invisible and don't do anything. Used e.g. to hide faction-specific layers and unused doors at the sides of outpost modules.
         /// </summary>
-        public bool IsLayerHidden { get; set; }
+        [Serialize(false, IsPropertySaveable.Yes)]
+        public bool IsDisabled { get; protected set; }
 
         /// <summary>
-        /// Is the entity hidden due to <see cref="HiddenInGame"/> being enabled or the layer the entity is in being hidden?
+        /// Is the entity hidden due to <see cref="HiddenInGame"/> (invisible) or <see cref="IsDisabled"/> (entirely disabled, not doing anything) or <see cref="IsHiddenByLinkedEntity"/> (temporarily hidden by another entity?)
         /// </summary>
-        public bool IsHidden => HiddenInGame || IsLayerHidden;
+        public bool IsHidden => HiddenInGame || IsDisabled || IsHiddenByLinkedEntity;
 
         public override Vector2 Position
         {
@@ -275,7 +309,8 @@ namespace Barotrauma
         public string Layer { get; set; }
 
         /// <summary>
-        /// The index of the outpost module this entity originally spawned in (-1 if not an outpost item)
+        /// The index of the outpost module this entity was originally a part of. -1 if not an outpost item, 0 if the outpost is fully pre-built and not generated from individual modules.
+        /// Needed for the logic that handles removing taken items from the outpost <see cref="Location.RegisterTakenItems(IEnumerable{Item})"/>.
         /// </summary>
         public int OriginalModuleIndex = -1;
 
@@ -290,6 +325,8 @@ namespace Barotrauma
         {
             this.Prefab = prefab;
             Scale = prefab != null ? prefab.Scale : 1;
+
+            GCHelper.RegisterForWatch(this, notes: $"{GetType().FullName} {prefab?.Identifier}", priority: WatchPriority.Low);
         }
 
         protected void ParseLinks(XElement element, IdRemap idRemap)
@@ -632,6 +669,16 @@ namespace Barotrauma
             }
         }
 
+        private static readonly HullGapUpdateBatch hullGapUpdateBatch = new HullGapUpdateBatch();
+
+        internal static void InvalidateHullGapTopology() => hullGapUpdateBatch.InvalidateTopology();
+
+        /// <summary>
+        /// Buffers for shuffling gaps and taking a snapshot for serial updates.
+        /// </summary>
+        private static readonly List<int> gapUpdateOrder = new List<int>();
+        private static readonly List<Gap> serialGaps = new List<Gap>();
+
         /// <summary>
         /// Call Update() on every object in Entity.list
         /// </summary>
@@ -641,9 +688,12 @@ namespace Barotrauma
             var sw = new System.Diagnostics.Stopwatch();
             sw.Start();
 #endif
-            foreach (Hull hull in Hull.HullList)
+            if (!hullGapUpdateBatch.TryUpdateHulls(Hull.HullList, Gap.GapList, deltaTime, cam))
             {
-                hull.Update(deltaTime, cam);
+                foreach (Hull hull in Hull.HullList)
+                {
+                    hull.Update(deltaTime, cam);
+                }
             }
 #if CLIENT
             Hull.UpdateCheats(deltaTime, cam);
@@ -654,17 +704,42 @@ namespace Barotrauma
                 structure.Update(deltaTime, cam);
             }
 
-            foreach (Gap gap in Gap.GapList)
-            {
-                gap.ResetWaterFlowThisFrame();
-            }
             //update gaps in random order, because otherwise in rooms with multiple gaps
             //the water/air will always tend to flow through the first gap in the list,
             //which may lead to weird behavior like water draining down only through
             //one gap in a room even if there are several
-            foreach (Gap gap in Gap.GapList.OrderBy(g => Rand.Int(int.MaxValue)))
+            gapUpdateOrder.Clear();
+            for (int i = 0; i < Gap.GapList.Count; i++)
             {
-                gap.Update(deltaTime, cam);
+                gapUpdateOrder.Add(i);
+            }
+            //Fisher-Yates shuffle
+            for (int i = gapUpdateOrder.Count - 1; i > 0; i--)
+            {
+                int j = Rand.Int(i + 1);
+                (gapUpdateOrder[i], gapUpdateOrder[j]) = (gapUpdateOrder[j], gapUpdateOrder[i]);
+            }
+            if (!hullGapUpdateBatch.TryUpdate(Hull.HullList, Gap.GapList, deltaTime, gapUpdateOrder))
+            {
+                foreach (Gap gap in Gap.GapList)
+                {
+                    gap.ResetWaterFlowThisFrame();
+                }
+                foreach (int index in gapUpdateOrder)
+                {
+                    serialGaps.Add(Gap.GapList[index]);
+                }
+                try
+                {
+                    foreach (Gap gap in serialGaps)
+                    {
+                        gap.Update(deltaTime, cam);
+                    }
+                }
+                finally
+                {
+                    serialGaps.Clear();
+                }
             }
 
 #if CLIENT
@@ -706,6 +781,11 @@ namespace Barotrauma
 
         public virtual void Update(float deltaTime, Camera cam) { }
 
+        public virtual void SetDisabled(bool disabled)
+        {
+            IsDisabled = disabled;
+        }
+
         /// <summary>
         /// Flip the entity horizontally
         /// </summary>
@@ -713,7 +793,7 @@ namespace Barotrauma
         /// <param name="force">Forces the item to be flipped even if it's configured not to be flippable.</param>
         public virtual void FlipX(bool relativeToSub, bool force = false)
         {
-            FlippedX = !FlippedX;
+            flippedX = !flippedX;
             if (!relativeToSub || Submarine == null) { return; }
 
             Vector2 relative = WorldPosition - Submarine.WorldPosition;
@@ -728,7 +808,7 @@ namespace Barotrauma
         /// <param name="force">Forces the item to be flipped even if it's configured not to be flippable.</param>
         public virtual void FlipY(bool relativeToSub, bool force = false)
         {
-            FlippedY = !FlippedY;
+            flippedY = !flippedY;
             if (!relativeToSub || Submarine == null) { return; }
 
             Vector2 relative = WorldPosition - Submarine.WorldPosition;
@@ -783,7 +863,11 @@ namespace Barotrauma
 
                 Identifier identifier = element.GetAttributeIdentifier("identifier", "");
                 Identifier replacementIdentifier = Identifier.Empty;
-                if (t == typeof(Structure))
+                if (!t.IsSubclassOf(typeof(MapEntity)))
+                {
+                    continue;
+                }
+                else if (t == typeof(Structure))
                 {
                     string name = element.Attribute("name").Value;
                     StructurePrefab structurePrefab = Structure.FindPrefab(name, identifier);
@@ -814,32 +898,29 @@ namespace Barotrauma
 
                 try
                 {
-                    MethodInfo loadMethod = t.GetMethod("Load", new[] { typeof(ContentXElement), typeof(Submarine), typeof(IdRemap) });
-                    if (loadMethod == null)
+                    var newElement = element.FromPackage(null);
+                    if (!replacementIdentifier.IsEmpty)
                     {
-                        DebugConsole.ThrowError("Could not find the method \"Load\" in " + t + ".");
+                        newElement.SetAttributeValue("identifier", replacementIdentifier.ToString());
                     }
-                    else if (!loadMethod.ReturnType.IsSubclassOf(typeof(MapEntity)))
-                    {
-                        DebugConsole.ThrowError("Error loading entity of the type \"" + t.ToString() + "\" - load method does not return a valid map entity.");
-                    }
+
+                    // Only these entity types can be saved in a submarine file
+                    MapEntity newEntity = null;
+                    if (t == typeof(Item)) { newEntity = Item.Load(newElement, submarine, idRemap); }
+                    else if (t == typeof(Structure)) { newEntity = Structure.Load(newElement, submarine, idRemap); }
+                    else if (t == typeof(Hull)) { newEntity = Hull.Load(newElement, submarine, idRemap); }
+                    else if (t == typeof(Gap)) { newEntity = Gap.Load(newElement, submarine, idRemap); }
+                    else if (t == typeof(WayPoint)) { newEntity = WayPoint.Load(newElement, submarine, idRemap); }
+                    else if (t == typeof(LinkedSubmarine)) { newEntity = LinkedSubmarine.Load(newElement, submarine, idRemap); }
                     else
                     {
-                        var newElement = element.FromPackage(null);
-                        if (!replacementIdentifier.IsEmpty)
-                        {
-                            newElement.SetAttributeValue("identifier", replacementIdentifier.ToString());
-                        }
-                        object newEntity = loadMethod.Invoke(t, new object[] { newElement, submarine, idRemap });
-                        if (newEntity != null)
-                        {
-                            entities.Add((MapEntity)newEntity);
-                        }
+                        DebugConsole.ThrowError($"Could not load an entity of the type \"{t}\" - the type cannot be saved in a submarine file.");
                     }
-                }
-                catch (TargetInvocationException e)
-                {
-                    DebugConsole.ThrowError("Error while loading entity of the type " + t + ".", e.InnerException);
+
+                    if (newEntity != null)
+                    {
+                        entities.Add(newEntity);
+                    }
                 }
                 catch (Exception e)
                 {
@@ -860,22 +941,27 @@ namespace Barotrauma
             InitializeLoadedLinks(entities);
 
             List<LinkedSubmarine> linkedSubs = new List<LinkedSubmarine>();
-            for (int i = 0; i < entities.Count; i++)
+            foreach (MapEntity entity in entities)
             {
-                if (entities[i].mapLoadedCalled || entities[i].Removed) { continue; }
-                if (entities[i] is LinkedSubmarine sub)
+                if (entity.mapLoadedCalled || entity.Removed) { continue; }
+                if (entity is LinkedSubmarine sub)
                 {
                     linkedSubs.Add(sub);
                     continue;
                 }
 
-                entities[i].OnMapLoaded();
+                entity.OnMapLoaded();
+                if (entity.IsDisabled)
+                {
+                    entity.SetDisabled(disabled: true);
+                }
             }
 
             if (updateHulls)
             {
                 Item.UpdateHulls();
                 Gap.UpdateHulls();
+                WayPoint.UpdateHulls();
             }
 
             entities.ForEach(e => e.mapLoadedCalled = true);
@@ -915,6 +1001,10 @@ namespace Barotrauma
             }
         }
 
+        /// <summary>
+        /// Intializes the <see cref="linkedTo"/> lists of the entities based on the loaded ids. Normally done in <see cref="MapEntity.MapLoaded(List{MapEntity}, bool)"/>,
+        /// but calling this manually may sometimes be necessary if the links are needed mid-way through loading, for example when generating outposts from multiple modules.
+        /// </summary>
         public static void InitializeLoadedLinks(IEnumerable<MapEntity> entities)
         {
             foreach (MapEntity e in entities)
@@ -930,6 +1020,7 @@ namespace Barotrauma
                     if (FindEntityByID(i) is MapEntity linked)
                     {
                         e.linkedTo.Add(linked);
+                        e.HandleHidingLinkedEntity(linked);
                     }
                     else
                     {
@@ -950,6 +1041,17 @@ namespace Barotrauma
         {
             DebugConsole.ThrowError("Saving entity " + GetType() + " failed.");
             return null;
+        }
+        
+        protected XElement SaveLinkedEntities(XElement element)
+        {
+            if (linkedTo is { Count: > 0 })
+            {
+                bool isOutpost = Submarine != null && Submarine.Info.IsOutpost;
+                var saveableLinked = linkedTo.Where(l => l.ShouldBeSaved && (l.Removed == Removed) && (l.Submarine == null || l.Submarine.Info.IsOutpost == isOutpost));
+                element.Add(new XAttribute("linked", string.Join(",", saveableLinked.Select(l => l.ID.ToString()))));
+            }
+            return element;
         }
 
         public void RemoveLinked(MapEntity e)
@@ -988,6 +1090,28 @@ namespace Barotrauma
                     }
                 }
             }
+        }
+        
+        public void HandleHidingLinkedEntity(MapEntity linkedEntity)
+        {
+            if (Prefab == null) { return; }
+            linkedEntity.IsHiddenByLinkedEntity = Prefab.ShouldHideLinkedEntity(linkedEntity);
+        }
+
+        public static void CleanUpStaticReferences()
+        {
+            Explosion.CleanUpStaticReferences();
+            Hull.CleanUpStaticReferences();
+            highlightedEntities.Clear();
+            tempHighlightedEntities.Clear();
+            gapUpdateOrder.Clear();
+            serialGaps.Clear();
+#if CLIENT
+            highlightedInEditorList.Clear();
+            FilteredSelectedList.Clear();
+            CopiedList.Clear();
+            ClearEditingHUD();
+#endif
         }
     }
 }

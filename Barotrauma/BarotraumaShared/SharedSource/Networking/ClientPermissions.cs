@@ -41,9 +41,11 @@ namespace Barotrauma.Networking
         public readonly LocalizedString Description;
         public readonly ClientPermissions Permissions;
         public readonly HashSet<DebugConsole.Command> PermittedCommands;
+        public readonly bool IsCustom;
         
-        public PermissionPreset(XElement element)
+        public PermissionPreset(XElement element, bool isCustom = false)
         {
+            IsCustom = isCustom;
             Identifier = element.GetAttributeIdentifier("name", Identifier.Empty);
             DisplayName = TextManager.Get("permissionpresetname." + Identifier).Fallback(Identifier.ToString());
             Description = TextManager.Get("permissionpresetdescription." + Identifier) .Fallback(element.GetAttributeString("description", ""));
@@ -76,7 +78,7 @@ namespace Barotrauma.Networking
             }
         }
 
-        public static void LoadAll(string file)
+        public static void LoadAll(string file, bool isCustom = false)
         {
             if (!File.Exists(file)) { return; }
 
@@ -85,7 +87,7 @@ namespace Barotrauma.Networking
 
             foreach (XElement element in doc.Root.Elements())
             {
-                var newPermissionPreset = new PermissionPreset(element);
+                var newPermissionPreset = new PermissionPreset(element, isCustom);
                 var existingPreset = List.FirstOrDefault(p => p.Identifier == newPermissionPreset.Identifier);
                 if (existingPreset != null)
                 {

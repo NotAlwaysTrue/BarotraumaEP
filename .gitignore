@@ -17,6 +17,10 @@ bld/
 [Rr]eleaseLinux/
 *.o
 
+# Local DedicatedServer HTTP configuration (contains the access token)
+HTTPPanelSettings.xml
+HTTPPanelSettings.xml.*.tmp
+
 # Misc vs crap 
 *.v12.suo
 *.suo
@@ -52,6 +56,8 @@ temp.txt
 
 # Private assets
 Barotrauma/BarotraumaShared/Content/*
+Barotrauma/BarotraumaShared/LocalMods/*
+DLC/Home & Harbor/SharedSource/Content/*
 Barotrauma/**/GameAnalyticsKeys.cs
 Deploy/DeployAll/PrivateKey.*
 .github/ISSUE_TEMPLATE/release-checklist.md

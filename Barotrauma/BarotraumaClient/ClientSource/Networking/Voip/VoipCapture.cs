@@ -1,4 +1,4 @@
-﻿using Barotrauma.Sounds;
+using Barotrauma.Sounds;
 using Concentus.Structs;
 using Microsoft.Xna.Framework;
 using OpenAL;
@@ -21,9 +21,7 @@ namespace Barotrauma.Networking
 
         private readonly IntPtr captureDevice;
 
-        private Thread captureThread;
-
-        private bool capturing;
+        private ThreadManager.WorkScope captureWork;
 
         private readonly OpusEncoder encoder;
 
@@ -149,13 +147,15 @@ namespace Barotrauma.Networking
                 throw new Exception("Failed to start capturing: " + alcError.ToString());
             }
 
-            capturing = true;
-            captureThread = new Thread(UpdateCapture)
+            try
             {
-                IsBackground = true,
-                Name = "VoipCapture"
-            };
-            captureThread.Start();
+                captureWork = ThreadManager.Instance.StartScopedThread("VoipCapture", UpdateCapture);
+            }
+            catch
+            {
+                Alc.CaptureCloseDevice(captureDevice);
+                throw;
+            }
         }
 
         public static void ChangeCaptureDevice(string deviceName)
@@ -178,14 +178,15 @@ namespace Barotrauma.Networking
         bool prevCaptured = true;
         int captureTimer;
 
-        private void UpdateCapture()
+        // This method runs on the capture thread. Avoid touching game state the main thread may be mutating.
+        private void UpdateCapture(CancellationToken stopping)
         {
             Array.Copy(uncompressedBuffer, 0, prevUncompressedBuffer, 0, VoipConfig.BUFFER_SIZE);
             Array.Clear(uncompressedBuffer, 0, VoipConfig.BUFFER_SIZE);
             nativeBuffer = Marshal.AllocHGlobal(VoipConfig.BUFFER_SIZE * 2);
             try
             {
-                while (capturing)
+                while (!stopping.IsCancellationRequested)
                 {
                     int alcError;
 
@@ -207,7 +208,8 @@ namespace Barotrauma.Networking
                         }
                     }
 
-                    FillBuffer();
+                    FillBuffer(stopping);
+                    if (stopping.IsCancellationRequested) { break; }
 
                     alcError = Alc.GetError(captureDevice);
                     if (alcError != Alc.NoError)
@@ -271,13 +273,6 @@ namespace Barotrauma.Networking
                     if (allowEnqueue || captureTimer > 0)
                     {
                         LastEnqueueAudio = DateTime.Now;
-                        if (GameMain.Client?.Character != null)
-                        {
-                            var messageType = !ForceLocal && ChatMessage.CanUseRadio(GameMain.Client.Character, out _) ? ChatMessageType.Radio : ChatMessageType.Default;
-                            if (GameMain.Client.Character.IsDead) { messageType = ChatMessageType.Dead; }
-                            
-                            GameMain.Client.Character.ShowTextlessSpeechBubble(1.25f, ChatMessage.MessageColor[(int)messageType]);
-                        }
                         //encode audio and enqueue it
                         lock (buffers)
                         {
@@ -311,7 +306,6 @@ namespace Barotrauma.Networking
             catch (Exception e)
             {
                 DebugConsole.ThrowError($"VoipCapture threw an exception. Disabling capture...", e);
-                capturing = false;
             }
             finally
             {
@@ -323,12 +317,12 @@ namespace Barotrauma.Networking
         private int overridePos;
         private readonly short[] overrideBuf = new short[VoipConfig.BUFFER_SIZE];
 
-        private void FillBuffer()
+        private void FillBuffer(CancellationToken stopping)
         {
             if (overrideSound != null)
             {
                 int totalSampleCount = 0;
-                while (totalSampleCount < VoipConfig.BUFFER_SIZE)
+                while (totalSampleCount < VoipConfig.BUFFER_SIZE && !stopping.IsCancellationRequested)
                 {
                     int sampleCount = overrideSound.FillStreamBuffer(overridePos, overrideBuf);
                     overridePos += sampleCount * 2;
@@ -341,7 +335,7 @@ namespace Barotrauma.Networking
                     }                    
                 }
                 int sleepMs = VoipConfig.BUFFER_SIZE * 800 / VoipConfig.FREQUENCY;
-                Thread.Sleep(sleepMs - 1);
+                stopping.WaitHandle.WaitOne(sleepMs - 1);
             }
             else
             {
@@ -362,11 +356,11 @@ namespace Barotrauma.Networking
                         int sleepMs = (VoipConfig.BUFFER_SIZE - sampleCount) * 800 / VoipConfig.FREQUENCY;
                         if (sleepMs >= 1)
                         {
-                            Thread.Sleep(sleepMs);
+                            stopping.WaitHandle.WaitOne(sleepMs);
                         }
                     }
 
-                    if (!capturing) { return; }
+                    if (stopping.IsCancellationRequested) { return; }
                 }
 
                 Alc.CaptureSamples(captureDevice, nativeBuffer, VoipConfig.BUFFER_SIZE);
@@ -397,9 +391,8 @@ namespace Barotrauma.Networking
         public override void Dispose()
         {
             Instance = null;
-            capturing = false;
-            captureThread?.Join();
-            captureThread = null;
+            captureWork?.Dispose();
+            captureWork = null;
             if (captureDevice != IntPtr.Zero) { Alc.CaptureCloseDevice(captureDevice); }
         }
         

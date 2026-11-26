@@ -1,10 +1,9 @@
-﻿using Barotrauma.IO;
+using Barotrauma.IO;
 using Barotrauma.Media;
 using Barotrauma.Networking;
 using Barotrauma.Particles;
 using Barotrauma.Steam;
 using Barotrauma.Transition;
-using Barotrauma.Tutorials;
 using FarseerPhysics;
 using FarseerPhysics.Dynamics;
 using Microsoft.Xna.Framework;
@@ -18,10 +17,11 @@ using System.Reflection;
 using System.Threading;
 using Barotrauma.Extensions;
 using System.Collections.Immutable;
+using Barotrauma.Plugins;
 
 namespace Barotrauma
 {
-    class GameMain : Game
+    public class GameMain : Game
     {
         public static bool ShowFPS;
         public static bool ShowPerf;
@@ -30,6 +30,9 @@ namespace Barotrauma
         /// Doesn't automatically enable los or bot AI or do anything like that. Probably not fully implemented.
         /// </summary>
         public static bool DevMode;
+
+        public static bool GCHelperOverlay;
+
         public static bool IsSingleplayer => NetworkMember == null;
         public static bool IsMultiplayer => NetworkMember != null;
 
@@ -46,10 +49,10 @@ namespace Barotrauma
 
         public readonly ImmutableArray<string> ConsoleArguments;
 
-        public readonly Option<string> EgsExchangeCode;
-
         public static GameScreen GameScreen;
         public static MainMenuScreen MainMenuScreen;
+        
+        public static CrashInfoScreen CrashInfoScreen;
 
         public static NetLobbyScreen NetLobbyScreen;
         public static ModDownloadScreen ModDownloadScreen;
@@ -113,13 +116,13 @@ namespace Barotrauma
         public static LoadingScreen TitleScreen;
         private bool loadingScreenOpen;
 
-        private Thread initialLoadingThread;
+        private ThreadManager.WorkScope initialLoading;
 
         public bool HasLoaded { get; private set; }
 
         private readonly GameTime fixedTime;
 
-        public Option<ConnectCommand> ConnectCommand = Option<ConnectCommand>.None();
+        internal Option<ConnectCommand> ConnectCommand = Option<ConnectCommand>.None();
         private string clientName;
 
         private static SpriteBatch spriteBatch;
@@ -245,15 +248,13 @@ namespace Barotrauma
 
             GameSettings.Init();
             CreatureMetrics.Init();
-            
-            ConsoleArguments = args.ToImmutableArray();
 
-            EgsExchangeCode = EosInterface.Login.ParseEgsExchangeCode(args);
+            ConsoleArguments = args.ToImmutableArray();
 
             try
             {
                 ConnectCommand = Barotrauma.Networking.ConnectCommand.Parse(ConsoleArguments);
-                
+
                 string clientNameFlagArg = args.FirstOrDefault(arg => arg.StartsWith("-username"));
                 if (clientNameFlagArg != null)
                 {
@@ -300,6 +301,13 @@ namespace Barotrauma
             MainThread = Thread.CurrentThread;
 
             Window.FileDropped += OnFileDropped;
+
+            ResolutionChanged += static () =>
+            {
+                PluginData.LoadedPluginData
+                          .SelectMany(static d => d.OnResolutionChangedEvents.Values)
+                          .ForEachMod(static e => e.Invoke());
+            };
         }
 
         public static void ExecuteAfterContentFinishedLoading(Action action)
@@ -433,11 +441,6 @@ namespace Barotrauma
 
             ScissorTestEnable = new RasterizerState() { ScissorTestEnable = true };
 
-            Hyper.ComponentModel.HyperTypeDescriptionProvider.Add(typeof(Character));
-            Hyper.ComponentModel.HyperTypeDescriptionProvider.Add(typeof(Item));
-            Hyper.ComponentModel.HyperTypeDescriptionProvider.Add(typeof(Items.Components.ItemComponent));
-            Hyper.ComponentModel.HyperTypeDescriptionProvider.Add(typeof(Hull));
-
             performanceCounterTimer = Stopwatch.StartNew();
             ResetIMEWorkaround();
         }
@@ -469,16 +472,25 @@ namespace Barotrauma
                 WaitForLanguageSelection = GameSettings.CurrentConfig.Language == LanguageIdentifier.None
             };
 
-            Eos.EosAccount.LoginPlatformSpecific();
-
-            initialLoadingThread = new Thread(Load)
-            {
-                Name = "Load"
-            };
-            initialLoadingThread.Start();
+            initialLoading = ThreadManager.Instance.StartScopedThread("Load", Load, background: false);
         }
 
-        private void Load()
+        internal void StopInitialLoading()
+        {
+            var work = initialLoading;
+            initialLoading = null;
+            work?.Dispose();
+        }
+
+        internal void StopBackgroundWork()
+        {
+            IsExiting = true;
+            StopInitialLoading();
+            TextureLoader.CancelAll();
+            ThreadManager.Current?.Shutdown();
+        }
+
+        private void Load(CancellationToken stopping)
         {
             static void log(string str)
             {
@@ -498,7 +510,10 @@ namespace Barotrauma
                 TitleScreen.AvailableLanguages = TextManager.AvailableLanguages.OrderBy(l => l.Value != "english".ToIdentifier()).ThenBy(l => l.Value).ToArray();
                 while (TitleScreen.WaitForLanguageSelection)
                 {
-                    Thread.Sleep((int)(Timing.Step * 1000));
+                    if (stopping.WaitHandle.WaitOne((int)(Timing.Step * 1000)))
+                    {
+                        return;
+                    }
                 }
                 LanguageIdentifier selectedLanguage = GameSettings.CurrentConfig.Language;
                 //unload text files at this point - we only loaded for the purposes of the language selection screen,
@@ -511,6 +526,7 @@ namespace Barotrauma
                 GameSettings.SaveCurrentConfig();
             }
 
+            stopping.ThrowIfCancellationRequested();
             SoundManager = new Sounds.SoundManager();
             SoundManager.ApplySettings();
 
@@ -531,10 +547,10 @@ namespace Barotrauma
                          .Select(p => p.Result).Successes())
             {
                 const float min = 1f, max = 70f;
-                if (IsExiting) { break; }
+                if (IsExiting || stopping.IsCancellationRequested) { break; }
                 TitleScreen.LoadState = MathHelper.Lerp(min, max, progress);
             }
-            if (IsExiting) { return; }
+            if (IsExiting || stopping.IsCancellationRequested) { return; }
 
             var corePackage = ContentPackageManager.EnabledPackages.Core;
             if (corePackage.EnableError.TryUnwrap(out var error))
@@ -579,6 +595,7 @@ namespace Barotrauma
             TitleScreen.LoadState = 80.0f;
 
             MainMenuScreen          = new MainMenuScreen(this);
+            CrashInfoScreen             = new CrashInfoScreen();
             ServerListScreen        = new ServerListScreen();
 
             TitleScreen.LoadState = 85.0f;
@@ -600,10 +617,6 @@ namespace Barotrauma
                 }
                 SteamManager.IncrementStat(AchievementStat.GameLaunchCount, 1);
             }
-            
-            
-
-            Eos.EosAccount.ExecuteAfterLogin(ProcessLaunchCountEos);
 
             SubEditorScreen         = new SubEditorScreen();
             TestScreen              = new TestScreen();
@@ -624,7 +637,14 @@ namespace Barotrauma
             LevelGenerationParams.CheckValidity();
 #endif
 
-            MainMenuScreen.Select();
+            if (CrashInfoScreen.ShouldShowCrashScreen())
+            {
+                CrashInfoScreen.Select();
+            }
+            else
+            {
+                MainMenuScreen.Select();
+            }
 
             ContainerTagPrefab.CheckForContainerTagErrors();
 
@@ -647,44 +667,13 @@ namespace Barotrauma
             }
         }
 
-        private static void ProcessLaunchCountEos()
-        {
-            if (!EosInterface.Core.IsInitialized) { return; }
-
-            static void trySetConnectCommand(string commandStr)
-            {
-                Instance.ConnectCommand = Instance.ConnectCommand.Fallback(Networking.ConnectCommand.Parse(commandStr));
-            }
-
-            EosInterface.Presence.OnJoinGame.Register("onJoinGame".ToIdentifier(), static jgi => trySetConnectCommand(jgi.JoinCommand));
-            EosInterface.Presence.OnInviteAccepted.Register("onInviteAccepted".ToIdentifier(), static aii => trySetConnectCommand(aii.JoinCommand));
-            
-            TaskPool.AddWithResult("Eos.GameMain.Load.QueryStats", EosInterface.Achievements.QueryStats(AchievementStat.GameLaunchCount), static result =>
-            {
-                result.Match(
-                    success: static stats =>
-                    {
-                        if (!stats.TryGetValue(AchievementStat.GameLaunchCount, out int launchCount)) { return; }
-
-                        if (launchCount > 0) { return; }
-
-                        IsFirstLaunch = true;
-                        GameAnalyticsManager.AddDesignEvent("FirstLaunch_Epic");
-                    },
-                    failure: static error => DebugConsole.ThrowError($"Failed to query stats for launch count: {error}")
-                );
-
-                TaskPool.Add("Eos.GameMain.Load.IngestStat", EosInterface.Achievements.IngestStats((AchievementStat.GameLaunchCount, 1)), TaskPool.IgnoredCallback);
-            });
-        }
-
         /// <summary>
         /// UnloadContent will be called once per game and is the place to unload
         /// all content.
         /// </summary>
         protected override void UnloadContent()
         {
-            TextureLoader.CancelAll();
+            StopBackgroundWork();
             CoroutineManager.StopCoroutines("Load");
             Video.Close();
             VoipCapture.Instance?.Dispose();
@@ -759,6 +748,11 @@ namespace Barotrauma
                 Stopwatch sw = new Stopwatch();
                 sw.Start();
 
+                foreach (var hook in PluginData.GetHooks<PluginOnPreUpdateDelegate>())
+                {
+                    hook((float)Timing.Step);
+                }
+
                 fixedTime.IsRunningSlowly = gameTime.IsRunningSlowly;
                 TimeSpan addTime = new TimeSpan(0, 0, 0, 0, 16);
                 fixedTime.ElapsedGameTime = addTime;
@@ -768,6 +762,13 @@ namespace Barotrauma
                 PlayerInput.Update(Timing.Step);
 
                 SocialOverlay.Instance?.Update();
+
+                if (GCHelperOverlay)
+                {
+                    GCHelper.TryUpdateActive();
+                }
+
+                PluginLoader.CheckUnloadedPlugins();
 
                 if (loadingScreenOpen)
                 {
@@ -883,10 +884,6 @@ namespace Barotrauma
                         && SocialOverlay.Instance is { } socialOverlay)
                     {
                         socialOverlay.IsOpen = !socialOverlay.IsOpen;
-                        if (socialOverlay.IsOpen)
-                        {
-                            socialOverlay.RefreshFriendList();
-                        }
                     }
 
                     if (PlayerInput.KeyHit(Keys.Escape) && WindowActive)
@@ -925,6 +922,10 @@ namespace Barotrauma
                         {
                             ((GUIMessageBox)GUIMessageBox.VisibleBox).Close();
                         }
+                        else if (CheckIfPluginHandledEscapeKey())
+                        {
+                            // Esc has been consumed, do nothing further with it
+                        }
                         else if (GUI.PauseMenuOpen)
                         {
                             GUI.TogglePauseMenu();
@@ -949,6 +950,18 @@ namespace Barotrauma
                             return
                                 Character.Controlled.SelectedItem.ActiveHUDs.Any(ic => ic.GuiFrame != null) ||
                                 ((Character.Controlled.ViewTarget as Item)?.Prefab?.FocusOnSelected ?? false);
+                        }
+                        
+                        static bool CheckIfPluginHandledEscapeKey()
+                        {
+                            foreach (var escKeyHook in PluginData.GetHooks<PluginHandleEscapeKeyDelegate>())
+                            {
+                                if (escKeyHook() == true) // a plugin consumed the esc key press
+                                {
+                                    return true;
+                                }
+                            }
+                            return false;
                         }
                     }
 
@@ -1046,7 +1059,6 @@ namespace Barotrauma
                 CoroutineManager.Update(Paused, (float)Timing.Step);
 
                 SteamManager.Update((float)Timing.Step);
-                EosInterface.Core.Update();
 
                 TaskPool.Update();
 
@@ -1056,6 +1068,10 @@ namespace Barotrauma
 
                 updateCount++;
 
+                foreach (var hook in PluginData.GetHooks<PluginOnPostUpdateDelegate>())
+                {
+                    hook((float)Timing.Step);
+                }
                 sw.Stop();
                 PerformanceCounter.AddElapsedTicks("Update", sw.ElapsedTicks);
                 PerformanceCounter.UpdateTimeGraph.Update(sw.ElapsedTicks * 1000.0f / (float)Stopwatch.Frequency);
@@ -1203,6 +1219,8 @@ namespace Barotrauma
                 SaveUtil.SaveGame(GameSession.DataPath);
             }
 
+            CleanUpReferencesToGameSession();
+
             if (Client != null)
             {
                 Client.Quit();
@@ -1233,6 +1251,27 @@ namespace Barotrauma
             GUIMessageBox.CloseAll();
             MainMenuScreen.Select();
             GameSession = null;
+        }
+
+        public static void CleanUpReferencesToGameSession()
+        {
+            NetLobbyScreen?.Release();
+            NetLobbyScreen = null;
+            Reputation.OnAnyReputationValueChanged.ClearAll();
+            LightManager.CleanUpReferences();
+            ParticleManager.ClearParticles();
+
+            Submarine.CleanUpStaticReferences();
+            MapEntity.CleanUpStaticReferences();
+            InteractionLabelManager.CleanUpStaticReferences();
+            HintManager.CleanUpStaticReferences();
+            AchievementManager.CleanUpStaticReferences();
+            CharacterHUD.CleanUpStaticReferences();
+            SpeechBubbleManager.ClearSpeechBubbles();
+            AIObjectiveFindThieves.CleanUpStaticReferences();
+
+            WaterRenderer.Instance.IndoorsVertices.Clear();
+            WaterRenderer.Instance.PositionInIndoorsBuffer.Clear();
         }
 
         public void ShowBugReporter()
@@ -1294,9 +1333,11 @@ namespace Barotrauma
         protected override void OnExiting(object sender, EventArgs args)
         {
             IsExiting = true;
+            StopInitialLoading();
             CreatureMetrics.Save();
             DebugConsole.NewMessage("Exiting...");
             Client?.Quit();
+            StopBackgroundWork();
             SteamManager.ShutDown();
 
             try

@@ -110,6 +110,11 @@ namespace Barotrauma.Networking
             }
         }
 
+#if SERVER
+        internal string[] ReadRecentLines(int limit) =>
+            lines.TakeLast(limit).Select(line => line.Text.SanitizedValue).ToArray();
+#endif
+
         public void WriteLine(string line, MessageType messageType)
         {
             //string logLine = "[" + DateTime.Now.ToLongTimeString() + "] " + line;
