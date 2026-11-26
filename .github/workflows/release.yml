@@ -51,7 +51,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          notes="$RELEASE_DESCRIPTION Archives are overlay patches for a matching game installation; keep the existing launchers and .NET runtime. For macOS clients, extract into Barotrauma.app/Contents/MacOS; for dedicated servers, use the directory containing DedicatedServer. BarotraumaEP is a modified version of Barotrauma; the original game and its assets belong to their respective owners."
+          notes="$RELEASE_DESCRIPTION Standard archives are overlay patches for a matching game installation. Keep the existing launchers and .NET runtime. For macOS clients, extract into Barotrauma.app/Contents/MacOS. For dedicated servers, use the directory containing DedicatedServer. BarotraumaEP is a modified version of Barotrauma. The original game and its assets belong to their respective owners."
+          if compgen -G 'packages/*_workshop.tar.gz' > /dev/null; then
+            notes+=$'\n\nWorkshop server archives include the dedicated server executable, the .NET runtime, and the server dependencies. From the extracted directory, run DedicatedServer.exe on Windows or ./DedicatedServer on Linux and macOS.'
+          fi
           git tag -f "$RELEASE_TAG" "$BUILD_SHA"
           git push origin "refs/tags/$RELEASE_TAG" --force
           if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
