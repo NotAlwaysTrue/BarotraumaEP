@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework;
 using System;
 
 namespace Barotrauma.Networking
@@ -9,7 +9,7 @@ namespace Barotrauma.Networking
         public const int DefaultQueryPort = 27016;
 
         public const int DefaultMaxPlayers = 16;
-        public static int MaxPlayers = 128;
+        public static int MaxPlayers = byte.MaxValue;
 
         public const int ServerNameMaxLength = 60;
         public const int ServerMessageMaxLength = 2000;

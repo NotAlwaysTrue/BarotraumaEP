@@ -85,6 +85,24 @@ public sealed class ThreadManager : IDisposable
             return;
         }
 
+        if (!TryInvokeOnMainThread(action))
+        {
+            throw new ObjectDisposedException(nameof(ThreadManager));
+        }
+    }
+
+    public bool TryInvokeOnMainThread(Action action)
+    {
+        if (Thread.CurrentThread == MainThread)
+        {
+            lock (gate)
+            {
+                if (dispatchClosed) { return false; }
+            }
+            action();
+            return true;
+        }
+
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!TryPostToMainThread(() =>
         {
@@ -99,9 +117,10 @@ public sealed class ThreadManager : IDisposable
             }
         }))
         {
-            throw new ObjectDisposedException(nameof(ThreadManager));
+            return false;
         }
         completion.Task.GetAwaiter().GetResult();
+        return true;
     }
 
     public void ProcessMainThreadTasks()

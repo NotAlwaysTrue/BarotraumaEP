@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Barotrauma.Plugins;
 
 namespace Barotrauma
 {
@@ -20,6 +21,12 @@ namespace Barotrauma
 
         public static void RequestExecutionOnMainThread(TaskDelegate deleg)
         {
+            if (LuaCsCompatibility.IsHttpCallback(deleg.Method))
+            {
+                ThreadManager.Current?.TryInvokeOnMainThread(() => deleg());
+                return;
+            }
+
             if (ThreadManager.Current is { } manager)
             {
                 manager.InvokeOnMainThread(() => deleg());

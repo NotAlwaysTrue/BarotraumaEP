@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -399,6 +399,10 @@ namespace Barotrauma.Plugins
                 OnPluginThrowUnhandledException(e, mainPluginAssembly);
                 UnloadPlugin(pluginInfoFile);
                 return PluginLoadResult.PluginThrewException;
+            }
+            finally
+            {
+                LuaCsCompatibility.DisableUpdatePriority(mainPluginAssembly);
             }
 
             return PluginLoadResult.Success;

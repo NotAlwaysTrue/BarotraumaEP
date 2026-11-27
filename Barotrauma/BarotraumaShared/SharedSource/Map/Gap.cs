@@ -1,4 +1,4 @@
-﻿using Barotrauma.Extensions;
+using Barotrauma.Extensions;
 using Barotrauma.Items.Components;
 using FarseerPhysics;
 using FarseerPhysics.Dynamics;
