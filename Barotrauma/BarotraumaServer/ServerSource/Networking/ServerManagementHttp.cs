@@ -380,7 +380,7 @@ namespace Barotrauma
                 return Failure(HttpStatusCode.NotFound, "The selected campaign save is unavailable. Reopen the save list.");
             }
 
-            return MultiPlayerCampaign.LoadCampaign(CampaignDataPath.CreateRegular(path), client: null)
+            return MultiPlayerCampaign.TryLoadCampaign(CampaignDataPath.CreateRegular(path), client: null)
                 ? null
                 : Failure(HttpStatusCode.Conflict, "The server could not load the selected campaign save.");
         }
@@ -409,7 +409,7 @@ namespace Barotrauma
                 return Failure(HttpStatusCode.Conflict, "Select an available starting submarine.");
             }
             string path = SaveUtil.CreateSavePath(SaveUtil.SaveType.Multiplayer, name);
-            return MultiPlayerCampaign.StartNewCampaign(path, sub.FilePath, seed, server.ServerSettings.CampaignSettings)
+            return MultiPlayerCampaign.TryStartNewCampaign(path, sub.FilePath, seed, server.ServerSettings.CampaignSettings)
                 ? null
                 : Failure(HttpStatusCode.Conflict, "The server could not create the campaign save.");
         }

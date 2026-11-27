@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using Barotrauma.Plugins;
 
 namespace Barotrauma
 {
@@ -76,6 +77,8 @@ namespace Barotrauma
                 }
                 if (totalSamples < MinimumHullWaveSamples) { return false; }
             }
+
+            if (!ModCompability.CanRunHullUpdatesInParallel()) { return false; }
 
             foreach (Hull hull in hulls)
             {
@@ -183,6 +186,8 @@ namespace Barotrauma
                     }
                     if (pendingFloods.Count < MinimumFloodSources) { return false; }
                 }
+
+                if (!ModCompability.CanRunGapUpdatesInParallel()) { return false; }
 
                 foreach (Gap gap in gaps)
                 {
