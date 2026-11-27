@@ -1,4 +1,4 @@
-﻿using Barotrauma.Extensions;
+using Barotrauma.Extensions;
 using Barotrauma.IO;
 using Barotrauma.Networking;
 using Microsoft.Xna.Framework;
@@ -128,7 +128,10 @@ namespace Barotrauma
             }
         }
 
-        public static bool StartNewCampaign(string savePath, string subPath, string seed, CampaignSettings startingSettings)
+        public static void StartNewCampaign(string savePath, string subPath, string seed, CampaignSettings startingSettings)
+            => TryStartNewCampaign(savePath, subPath, seed, startingSettings);
+
+        public static bool TryStartNewCampaign(string savePath, string subPath, string seed, CampaignSettings startingSettings)
         {
             if (string.IsNullOrWhiteSpace(savePath)) { return false; }
 
@@ -157,7 +160,10 @@ namespace Barotrauma
             return true;
         }
 
-        public static bool LoadCampaign(CampaignDataPath path, Client client)
+        public static void LoadCampaign(CampaignDataPath path, Client client)
+            => TryLoadCampaign(path, client);
+
+        public static bool TryLoadCampaign(CampaignDataPath path, Client client)
         {
             GameMain.NetLobbyScreen.ToggleCampaignMode(true);
             try

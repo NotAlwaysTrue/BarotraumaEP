@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Barotrauma.IO;
 using System.Linq;
@@ -43,6 +43,10 @@ namespace Barotrauma.Networking
         public readonly HashSet<DebugConsole.Command> PermittedCommands;
         public readonly bool IsCustom;
         
+        public PermissionPreset(XElement element) : this(element, isCustom: false)
+        {
+        }
+
         public PermissionPreset(XElement element, bool isCustom = false)
         {
             IsCustom = isCustom;
@@ -77,6 +81,8 @@ namespace Barotrauma.Networking
                 }
             }
         }
+
+        public static void LoadAll(string file) => LoadAll(file, isCustom: false);
 
         public static void LoadAll(string file, bool isCustom = false)
         {
