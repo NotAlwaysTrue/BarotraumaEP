@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Barotrauma.IO;
@@ -311,7 +311,7 @@ namespace Barotrauma
                 }
 
 #if UNSTABLE
-                string line1 = "Barotrauma Unstable v" + GameMain.Version;
+                string line1 = "Barotrauma Unstable v" + GameMain.Version + " (ProjectEP)";
                 string line2 = "(" + AssemblyInfo.BuildString + ", branch " + AssemblyInfo.GitBranch + ", revision " + AssemblyInfo.GitRevision + ")";
 
                 Rectangle watermarkRect = new Rectangle(-50, GameMain.GraphicsHeight - 80, 50 + (int)(Math.Max(GUIStyle.LargeFont.MeasureString(line1).X, GUIStyle.Font.MeasureString(line2).X) * 1.2f), 100);

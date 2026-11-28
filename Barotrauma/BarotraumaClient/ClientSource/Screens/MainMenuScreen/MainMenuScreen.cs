@@ -1,4 +1,4 @@
-﻿//#define TEST_REMOTE_CONTENT
+//#define TEST_REMOTE_CONTENT
 
 using Barotrauma.Extensions;
 using Barotrauma.Networking;
@@ -97,7 +97,7 @@ namespace Barotrauma
             rightTextFooterLayout = createTextFooter();
 
             gameAnalyticsStatusText = createLeftText(TextManager.Get($"GameAnalyticsStatus.{GameAnalyticsManager.Consent.Unknown}"));
-            createLeftText(AssemblyInfo.FullVersionDisplayText);
+            createLeftText(AssemblyInfo.FullVersionDisplayText + " (ProjectEP)");
 
             var privacyPolicyText = createRightText(TextManager.Get("privacypolicy").Fallback("Privacy policy"));
             (Rectangle Rect, bool MouseOn) getPrivacyPolicyHoverRect()

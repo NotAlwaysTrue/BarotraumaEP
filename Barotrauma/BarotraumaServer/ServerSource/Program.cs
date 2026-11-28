@@ -64,7 +64,7 @@ namespace Barotrauma
                 GameMain.ShouldRun = false;
             };
 #endif
-            Console.WriteLine("Barotrauma Dedicated Server " + GameMain.Version +
+            Console.WriteLine("Barotrauma Dedicated Server (ProjectEP) " + GameMain.Version +
                 " (" + AssemblyInfo.BuildString + ", branch " + AssemblyInfo.GitBranch + ", revision " + AssemblyInfo.GitRevision + ")");
             if (Console.IsOutputRedirected)
             {
@@ -156,7 +156,7 @@ namespace Barotrauma
             catch (Exception exceptionHandlerError)
             {
                 Debug.WriteLine(exceptionHandlerError.Message);
-                string slimCrashReport = "Exception handler failed: " + exceptionHandlerError.Message + "\n" + exceptionHandlerError.StackTrace;
+                string slimCrashReport = "Barotrauma Dedicated Server (ProjectEP) crash report\nException handler failed: " + exceptionHandlerError.Message + "\n" + exceptionHandlerError.StackTrace;
                 if (unhandledException != null)
                 {
                     slimCrashReport += "\n\nInitial exception: " + unhandledException.Message + "\n" + unhandledException.StackTrace;
@@ -194,7 +194,7 @@ namespace Barotrauma
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("Barotrauma Dedicated Server crash report (generated on " + DateTime.Now + ")");
+            sb.AppendLine("Barotrauma Dedicated Server (ProjectEP) crash report (generated on " + DateTime.Now + ")");
             sb.AppendLine("\n");
             sb.AppendLine("Barotrauma seems to have crashed. Sorry for the inconvenience! ");
             sb.AppendLine("\n");

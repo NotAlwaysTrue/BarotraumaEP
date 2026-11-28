@@ -95,7 +95,7 @@ namespace Barotrauma
             catch (Exception exceptionHandlerError)
             {
                 Debug.WriteLine(exceptionHandlerError.Message);
-                string slimCrashReport = "Exception handler failed: " + exceptionHandlerError.Message + "\n" + exceptionHandlerError.StackTrace;
+                string slimCrashReport = "Barotrauma Client (ProjectEP) crash report\nException handler failed: " + exceptionHandlerError.Message + "\n" + exceptionHandlerError.StackTrace;
                 if (unhandledException != null)
                 {
                     slimCrashReport += "\n\nInitial exception: " + unhandledException.Message + "\n" + unhandledException.StackTrace;
@@ -139,7 +139,7 @@ namespace Barotrauma
 
             StringBuilder sb = new StringBuilder();
 
-            sb.AppendLine("Barotrauma Client crash report (generated on " + DateTime.Now + ")");
+            sb.AppendLine("Barotrauma Client (ProjectEP) crash report (generated on " + DateTime.Now + ")");
             sb.AppendLine();
             sb.AppendLine("Barotrauma seems to have crashed. Sorry for the inconvenience! ");
             sb.AppendLine();
