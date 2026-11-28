@@ -35,6 +35,7 @@ namespace Barotrauma.Networking
         public bool SubmarineSwitchLoad = false;
 
         private readonly List<Client> connectedClients = new List<Client>();
+        private readonly PositionUpdateBatch positionUpdates = new();
 
         /// <summary>
         /// For keeping track of disconnected clients in case they reconnect shortly after.
@@ -727,28 +728,44 @@ namespace Barotrauma.Networking
             {
                 if (ConnectedClients.Count > 0)
                 {
-                    foreach (Client c in ConnectedClients)
+                    try
                     {
-                        try
+                        if (GameStarted)
                         {
-                            ClientWrite(c);
-                        }
-                        catch (Exception e)
-                        {
-                            DebugConsole.ThrowError("Failed to write a network message for the client \"" + c.Name + "\"!", e);
-
-                            string errorMsg = "Failed to write a network message for a client! (MidRoundSyncing: " + c.NeedsMidRoundSync + ")\n"
-                                + e.Message + "\n" + e.StackTrace.CleanupStackTrace();
-                            if (e.InnerException != null)
+                            try { positionUpdates.Prepare(ConnectedClients); }
+                            catch (Exception e)
                             {
-                                errorMsg += "\nInner exception: " + e.InnerException.Message + "\n" + e.InnerException.StackTrace.CleanupStackTrace();
+                                // Keep sending pending positions and other network messages if selection fails this tick.
+                                DebugConsole.ThrowError("Failed to prepare position updates.", e);
                             }
-
-                            GameAnalyticsManager.AddErrorEventOnce(
-                                "GameServer.Update:ClientWriteFailed" + e.StackTrace.CleanupStackTrace(),
-                                GameAnalyticsManager.ErrorSeverity.Error,
-                                errorMsg);
                         }
+                        foreach (Client c in ConnectedClients)
+                        {
+                            try
+                            {
+                                ClientWrite(c);
+                            }
+                            catch (Exception e)
+                            {
+                                DebugConsole.ThrowError("Failed to write a network message for the client \"" + c.Name + "\"!", e);
+
+                                string errorMsg = "Failed to write a network message for a client! (MidRoundSyncing: " + c.NeedsMidRoundSync + ")\n"
+                                    + e.Message + "\n" + e.StackTrace.CleanupStackTrace();
+                                if (e.InnerException != null)
+                                {
+                                    errorMsg += "\nInner exception: " + e.InnerException.Message + "\n" + e.InnerException.StackTrace.CleanupStackTrace();
+                                }
+
+                                GameAnalyticsManager.AddErrorEventOnce(
+                                    "GameServer.Update:ClientWriteFailed" + e.StackTrace.CleanupStackTrace(),
+                                    GameAnalyticsManager.ErrorSeverity.Error,
+                                    errorMsg);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        positionUpdates.Clear();
                     }
 
                     foreach (Character character in Character.CharacterList)
@@ -2134,82 +2151,7 @@ namespace Barotrauma.Networking
             //characters or items spawned mid-round don't necessarily exist at the client's end yet
             if (!c.NeedsMidRoundSync)
             {
-                Character clientCharacter = c.Character;
-                foreach (Character otherCharacter in Character.CharacterList)
-                {
-                    if (!otherCharacter.Enabled) { continue; }
-                    if (c.SpectatePos == null)
-                    {
-                        //not spectating ->
-                        //  check if the client's character, or the entity they're viewing,
-                        //  is close enough to the other character or the entity the other character is viewing
-                        float distSqr = GetShortestDistance(clientCharacter.WorldPosition, otherCharacter);
-                        if (clientCharacter.ViewTarget != null && clientCharacter.ViewTarget != clientCharacter)
-                        {
-                            distSqr = Math.Min(distSqr, GetShortestDistance(clientCharacter.ViewTarget.WorldPosition, otherCharacter));
-                        }
-                        if (distSqr >= MathUtils.Pow2(otherCharacter.Params.DisableDistance)) { continue; }
-                    }
-                    else if (otherCharacter != clientCharacter)
-                    {
-                        //spectating ->
-                        //  check if the position the client is viewing
-                        //  is close enough to the other character or the entity the other character is viewing
-                        if (GetShortestDistance(c.SpectatePos.Value, otherCharacter) >= MathUtils.Pow2(otherCharacter.Params.DisableDistance)) { continue; }
-                    }
-
-                    static float GetShortestDistance(Vector2 viewPos, Character targetCharacter)
-                    {
-                        float distSqr = Vector2.DistanceSquared(viewPos, targetCharacter.WorldPosition);
-                        if (targetCharacter.ViewTarget != null && targetCharacter.ViewTarget != targetCharacter)
-                        {
-                            //if the character is viewing something (far-away turret?),
-                            //we might want to send updates about it to the spectating client even though they're far away from the actual character
-                            distSqr = Math.Min(distSqr, Vector2.DistanceSquared(viewPos, targetCharacter.ViewTarget.WorldPosition));
-                        }
-                        return distSqr;
-                    }
-
-                    float updateInterval = otherCharacter.GetPositionUpdateInterval(c);
-                    c.PositionUpdateLastSent.TryGetValue(otherCharacter, out float lastSent);
-                    if (lastSent > NetTime.Now)
-                    {
-                        //sent in the future -> can't be right, remove
-                        c.PositionUpdateLastSent.Remove(otherCharacter);
-                    }
-                    else
-                    {
-                        if (lastSent > NetTime.Now - updateInterval) { continue; }
-                    }
-                    if (!c.PendingPositionUpdates.Contains(otherCharacter)) { c.PendingPositionUpdates.Enqueue(otherCharacter); }
-                }
-
-                foreach (Submarine sub in Submarine.Loaded)
-                {
-                    //if docked to a sub with a smaller ID, don't send an update
-                    //  (= update is only sent for the docked sub that has the smallest ID, doesn't matter if it's the main sub or a shuttle)
-                    if (sub.Info.IsOutpost || sub.DockedTo.Any(s => s.ID < sub.ID)) { continue; }
-                    if (sub.PhysicsBody == null || sub.PhysicsBody.BodyType == FarseerPhysics.BodyType.Static) { continue; }
-                    if (!c.PendingPositionUpdates.Contains(sub)) { c.PendingPositionUpdates.Enqueue(sub); }
-                }
-
-                foreach (Item item in Item.ItemList)
-                {
-                    if (item.PositionUpdateInterval == float.PositiveInfinity) { continue; }
-                    if (item.DelayPositionUpdatesUntil > NetTime.Now) { continue; }
-                    float updateInterval = item.GetPositionUpdateInterval(c);
-                    c.PositionUpdateLastSent.TryGetValue(item, out float lastSent);
-                    if (lastSent > NetTime.Now)
-                    {
-                        //sent in the future -> can't be right, remove
-                        c.PositionUpdateLastSent.Remove(item);
-                    }
-                    else
-                    {
-                        if (lastSent > NetTime.Now - updateInterval) { continue; }
-                    }
-                    if (!c.PendingPositionUpdates.Contains(item)) { c.PendingPositionUpdates.Enqueue(item); }
-                }
+                positionUpdates.EnqueueFor(c);
             }
 
             IWriteMessage outmsg = new WriteOnlyMessage();

@@ -66,6 +66,7 @@ namespace Barotrauma.Networking
         //  key = entity, value = NetTime.Now when sending
         public readonly Dictionary<Entity, float> PositionUpdateLastSent = new Dictionary<Entity, float>();
         public readonly Queue<Entity> PendingPositionUpdates = new Queue<Entity>();
+        internal readonly PositionUpdateBatch.Selection PositionSelection = new();
 
         public bool ReadyToStart;
 
