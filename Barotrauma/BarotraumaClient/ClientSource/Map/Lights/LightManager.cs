@@ -24,6 +24,8 @@ namespace Barotrauma.Lights
         const float ObstructLightsBehindCharactersZoomThreshold = 0.5f;
 
         private readonly Queue<RayCastTask> pendingRayCasts = new Queue<RayCastTask>();
+        // A light stays in this set from enqueue until the worker finishes its calculation.
+        private readonly HashSet<LightSource> scheduledRayCasts = new(ReferenceEqualityComparer.Instance);
 
         public static Entity ViewTarget { get; set; }
 
@@ -202,29 +204,37 @@ namespace Barotrauma.Lights
             }
         }
 
-        private static readonly object mutex = new object();
-
         public void AddRayCastTask(LightSource lightSource, Vector2 drawPos, float rotation)
         {
-            lock (mutex)
+            lock (pendingRayCasts)
             {
-                if (pendingRayCasts.Any(p => p.LightSource == lightSource)) { return; }
+                if (!scheduledRayCasts.Add(lightSource)) { return; }
                 pendingRayCasts.Enqueue(new RayCastTask(lightSource, drawPos, rotation));
             }
+        }
+
+        internal bool HasScheduledRayCast(LightSource lightSource)
+        {
+            lock (pendingRayCasts) { return scheduledRayCasts.Contains(lightSource); }
         }
 
         private void UpdateRayCasts(CancellationToken stopping)
         {
             while (!stopping.IsCancellationRequested)
             {
-                lock (mutex)
+                RayCastTask task;
+                lock (pendingRayCasts) { pendingRayCasts.TryDequeue(out task); }
+                if (task == null)
                 {
-                    while (!stopping.IsCancellationRequested && pendingRayCasts.TryDequeue(out RayCastTask task))
-                    {
-                        task.Calculate();
-                    }
+                    stopping.WaitHandle.WaitOne(10);
+                    continue;
                 }
-                stopping.WaitHandle.WaitOne(10);
+
+                try { task.Calculate(); }
+                finally
+                {
+                    lock (pendingRayCasts) { scheduledRayCasts.Remove(task.LightSource); }
+                }
             }
         }
 
@@ -709,8 +719,7 @@ namespace Barotrauma.Lights
             return visibleHulls;
         }
         
-        private static readonly List<VertexPositionColor> ShadowVertices = new List<VertexPositionColor>(500);
-        private static readonly List<VertexPositionTexture> PenumbraVertices = new List<VertexPositionTexture>(500);
+        private readonly LosGeometryBatch losGeometry = new();
 
         public void UpdateObstructVision(GraphicsDevice graphics, SpriteBatch spriteBatch, Camera cam, Vector2 lookAtPosition)
         {
@@ -804,42 +813,18 @@ namespace Barotrauma.Lights
 
                 if (convexHulls != null)
                 {
-                    ShadowVertices.Clear();
-                    PenumbraVertices.Clear();
-                    foreach (ConvexHull convexHull in convexHulls)
-                    {
-                        if (!convexHull.Intersects(camView)) { continue; }
-
-                        Vector2 relativeViewPos = pos;
-                        if (convexHull.ParentEntity?.Submarine != null)
-                        {
-                            relativeViewPos -= convexHull.ParentEntity.Submarine.DrawPosition;
-                        }
-
-                        convexHull.CalculateLosVertices(relativeViewPos);
-
-                        for (int i = 0; i < convexHull.ShadowVertexCount; i++)
-                        {
-                            ShadowVertices.Add(convexHull.ShadowVertices[i]);
-                        }
-
-                        for (int i = 0; i < convexHull.PenumbraVertexCount; i++)
-                        {
-                            PenumbraVertices.Add(convexHull.PenumbraVertices[i]);
-                        }
-                    }
-
-                    if (ShadowVertices.Count > 0)
+                    losGeometry.Build(convexHulls, camView, pos);
+                    if (losGeometry.ShadowCount > 0)
                     {
                         ConvexHull.shadowEffect.World = shadowTransform;
                         ConvexHull.shadowEffect.CurrentTechnique.Passes[0].Apply();
-                        graphics.DrawUserPrimitives(PrimitiveType.TriangleList, ShadowVertices.ToArray(), 0, ShadowVertices.Count / 3, VertexPositionColor.VertexDeclaration);
+                        graphics.DrawUserPrimitives(PrimitiveType.TriangleList, losGeometry.Shadows, 0, losGeometry.ShadowCount / 3, VertexPositionColor.VertexDeclaration);
 
-                        if (PenumbraVertices.Count > 0)
+                        if (losGeometry.PenumbraCount > 0)
                         {
                             ConvexHull.penumbraEffect.World = shadowTransform;
                             ConvexHull.penumbraEffect.CurrentTechnique.Passes[0].Apply();
-                            graphics.DrawUserPrimitives(PrimitiveType.TriangleList, PenumbraVertices.ToArray(), 0, PenumbraVertices.Count / 3, VertexPositionTexture.VertexDeclaration);
+                            graphics.DrawUserPrimitives(PrimitiveType.TriangleList, losGeometry.Penumbras, 0, losGeometry.PenumbraCount / 3, VertexPositionTexture.VertexDeclaration);
                         }
                     }
                 }

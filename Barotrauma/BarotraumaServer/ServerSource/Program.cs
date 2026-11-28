@@ -49,7 +49,7 @@ namespace Barotrauma
         [STAThread]
         static void Main(string[] args)
         {
-            using var threadManager = ThreadManager.Initialize();
+            using var threadManager = ThreadManager.Initialize(args);
             AppDomain currentDomain = AppDomain.CurrentDomain;
             currentDomain.ProcessExit += OnProcessExit;
 #if !DEBUG

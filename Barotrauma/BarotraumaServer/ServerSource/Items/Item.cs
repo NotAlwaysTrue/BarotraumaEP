@@ -405,14 +405,20 @@ namespace Barotrauma
                 return float.PositiveInfinity;
             }
 
-            if (recipient.Character == null || recipient.Character.IsDead)
+            float? distanceSquared = recipient.Character is { IsDead: false } character
+                ? Vector2.DistanceSquared(character.WorldPosition, WorldPosition) : null;
+            return CalculatePositionUpdateInterval(PositionUpdateInterval, distanceSquared);
+        }
+
+        internal static float CalculatePositionUpdateInterval(float interval, float? distanceSquared)
+        {
+            if (distanceSquared is not { } distSqr)
             {
                 //less frequent updates for clients who aren't controlling a character (max 2 updates/sec)
-                return Math.Max(PositionUpdateInterval, 0.5f);
+                return Math.Max(interval, 0.5f);
             }
             else
             {
-                float distSqr = Vector2.DistanceSquared(recipient.Character.WorldPosition, WorldPosition);
                 if (distSqr > 20000.0f * 20000.0f)
                 {
                     //don't send position updates at all if >20 000 units away
@@ -421,14 +427,14 @@ namespace Barotrauma
                 else if (distSqr > 10000.0f * 10000.0f)
                 {
                     //drop the update rate to 10% if too far to see the item
-                    return PositionUpdateInterval * 10;
+                    return interval * 10;
                 }
                 else if (distSqr > 1000.0f * 1000.0f)
                 {
                     //halve the update rate if the client is far away (but still close enough to possibly see the item)
-                    return PositionUpdateInterval * 2;
+                    return interval * 2;
                 }
-                return PositionUpdateInterval;
+                return interval;
             }
         }
 

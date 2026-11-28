@@ -55,16 +55,27 @@ namespace Barotrauma
 
             Vector2 comparePosition = recipient.SpectatePos ?? recipient.Character.WorldPosition;
 
-            float distance = Vector2.Distance(comparePosition, WorldPosition);
-            if (recipient.Character?.ViewTarget != null)
-            {
-                distance = Math.Min(distance, Vector2.Distance(recipient.Character.ViewTarget.WorldPosition, WorldPosition));
-            }
-            if (ViewTarget != null && ViewTarget != this)
-            {
-                distance = Math.Min(distance, Vector2.Distance(comparePosition, ViewTarget.WorldPosition));
-            }
+            float distanceSquared = GetPositionUpdateDistanceSquared(comparePosition, recipient.Character?.ViewTarget?.WorldPosition,
+                WorldPosition, ViewTarget != this ? ViewTarget?.WorldPosition : null);
+            return CalculatePositionUpdateInterval(MathF.Sqrt(distanceSquared), IsDead && !AnimController.IsDraggedWithRope);
+        }
 
+        internal static float GetPositionUpdateDistanceSquared(Vector2 observer, Vector2? observerView, Vector2 target, Vector2? targetView)
+        {
+            float distance = Vector2.DistanceSquared(observer, target);
+            if (observerView is { } from)
+            {
+                distance = Math.Min(distance, Vector2.DistanceSquared(from, target));
+            }
+            if (targetView is { } to)
+            {
+                distance = Math.Min(distance, Vector2.DistanceSquared(observer, to));
+            }
+            return distance;
+        }
+
+        internal static float CalculatePositionUpdateInterval(float distance, bool slowCorpseUpdates)
+        {
             float priority = 1.0f - MathUtils.InverseLerp(
                 NetConfig.HighPrioCharacterPositionUpdateDistance, 
                 NetConfig.LowPrioCharacterPositionUpdateDistance,
@@ -75,7 +86,7 @@ namespace Barotrauma
                 NetConfig.HighPrioCharacterPositionUpdateInterval,
                 priority);
 
-            if (IsDead && !AnimController.IsDraggedWithRope)
+            if (slowCorpseUpdates)
             {
                 interval = Math.Max(interval * 2, 0.1f);
             }
