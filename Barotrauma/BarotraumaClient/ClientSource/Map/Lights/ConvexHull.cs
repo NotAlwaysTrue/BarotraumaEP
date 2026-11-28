@@ -504,22 +504,36 @@ namespace Barotrauma.Lights
             }
         }
 
+        internal readonly record struct LosSegment(ConvexHull Hull, Vector2 ViewPosition, Vector3 DrawOffset,
+            Vector2 Start, Vector2 End, bool ReverseWinding)
+        {
+            internal void CalculateVertices()
+            {
+                Hull.CalculateShadowVertices(this);
+                Hull.CalculatePenumbraVertices(this);
+            }
+        }
+
+        internal LosSegment CaptureLosSegment(Vector2 localView, Vector2 drawOffset) =>
+            new(this, localView, new Vector3(drawOffset, 0.0f),
+                losVertices[0].Pos + losOffsets[0], losVertices[1].Pos + losOffsets[1],
+                IsSegmentFacing(losVertices[0].Pos, losVertices[1].Pos, localView));
+
         public void CalculateLosVertices(Vector2 lightSourcePos)
         {
-            Vector3 offset = Vector3.Zero;
-            if (ParentEntity != null && ParentEntity.Submarine != null)
-            {
-                offset = new Vector3(ParentEntity.Submarine.DrawPosition.X, ParentEntity.Submarine.DrawPosition.Y, 0.0f);
-            }
+            CalculateShadowVertices(CaptureLosSegment(lightSourcePos, ParentEntity?.Submarine?.DrawPosition ?? Vector2.Zero));
+            CalculateLosPenumbraVertices(lightSourcePos);
+        }
 
+        private void CalculateShadowVertices(in LosSegment segment)
+        {
+            Vector2 lightSourcePos = segment.ViewPosition;
+            Vector3 offset = segment.DrawOffset;
             ShadowVertexCount = 0;
-
-            for (int i = 0; i < losVertices.Length; i++)
+            for (int i = 0; i < 2; i++)
             {
-                int currentIndex = i;
-                int nextIndex = (currentIndex + 1) % 2;
-                Vector3 vertexPos0 = new Vector3(losVertices[currentIndex].Pos + losOffsets[currentIndex], 0.0f);
-                Vector3 vertexPos1 = new Vector3(losVertices[nextIndex].Pos + losOffsets[nextIndex], 0.0f);
+                Vector3 vertexPos0 = new Vector3(i == 0 ? segment.Start : segment.End, 0.0f);
+                Vector3 vertexPos1 = new Vector3(i == 0 ? segment.End : segment.Start, 0.0f);
 
                 if (Vector3.DistanceSquared(vertexPos0, vertexPos1) < 1.0f) { continue; }
 
@@ -570,12 +584,11 @@ namespace Barotrauma.Lights
                 ShadowVertexCount += 6;
             }
 
-            if (IsSegmentFacing(losVertices[0].Pos, losVertices[1].Pos, lightSourcePos))
+            if (segment.ReverseWinding)
             {
                 Array.Reverse(ShadowVertices, 0, ShadowVertexCount);
             }
 
-            CalculateLosPenumbraVertices(lightSourcePos);
         }
 
         private static bool IsSegmentFacing(Vector2 segmentPos1, Vector2 segmentPos2, Vector2 viewPosition)
@@ -588,21 +601,18 @@ namespace Barotrauma.Lights
             return Vector2.Dot(segmentNormal, viewDirection) > 0;
         }
 
-        private void CalculateLosPenumbraVertices(Vector2 lightSourcePos)
-        {
-            Vector3 offset = Vector3.Zero;
-            if (ParentEntity != null && ParentEntity.Submarine != null)
-            {
-                offset = new Vector3(ParentEntity.Submarine.DrawPosition.X, ParentEntity.Submarine.DrawPosition.Y, 0.0f);
-            }
+        private void CalculateLosPenumbraVertices(Vector2 lightSourcePos) =>
+            CalculatePenumbraVertices(CaptureLosSegment(lightSourcePos, ParentEntity?.Submarine?.DrawPosition ?? Vector2.Zero));
 
+        private void CalculatePenumbraVertices(in LosSegment segment)
+        {
+            Vector2 lightSourcePos = segment.ViewPosition;
+            Vector3 offset = segment.DrawOffset;
             PenumbraVertexCount = 0;
-            for (int i = 0; i < losVertices.Length; i++)
+            for (int i = 0; i < 2; i++)
             {
-                int currentIndex = i;
-                int nextIndex = (i + 1) % 2;
-                Vector2 vertexPos0 = losVertices[currentIndex].Pos + losOffsets[currentIndex];
-                Vector2 vertexPos1 = losVertices[nextIndex].Pos + losOffsets[nextIndex];
+                Vector2 vertexPos0 = i == 0 ? segment.Start : segment.End;
+                Vector2 vertexPos1 = i == 0 ? segment.End : segment.Start;
 
                 if (Vector2.DistanceSquared(vertexPos0, vertexPos1) < 1.0f) { continue; }
                       
