@@ -38,7 +38,7 @@ namespace Barotrauma
         [STAThread]
         static void Main(string[] args)
         {
-            using var threadManager = ThreadManager.Initialize();
+            using var threadManager = ThreadManager.Initialize(args);
             string executableDir = "";
 
 #if !DEBUG
@@ -57,6 +57,7 @@ namespace Barotrauma
                 newMessage: (message, color) => DebugConsole.NewMessage(message, color),
                 log: DebugConsole.Log,
                 throwError: (message, exception) => DebugConsole.ThrowError(message, exception));
+            if (threadManager.StartupWarning is { } warning) { DebugConsole.AddWarning(warning); }
             if (SteamManager.SteamworksLibExists)
             {
                 SteamManager.Initialize();

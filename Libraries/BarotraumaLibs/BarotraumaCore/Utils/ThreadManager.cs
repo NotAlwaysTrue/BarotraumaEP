@@ -16,20 +16,28 @@ public sealed class ThreadManager : IDisposable
     private readonly object gate = new object();
     private readonly Queue<Action> mainQueue = new Queue<Action>();
     private readonly HashSet<WorkScope> scopes = new HashSet<WorkScope>();
+    private readonly CoreWorkers workers;
     private bool stopping;
     private bool dispatchClosed;
 
     public Thread MainThread { get; } = Thread.CurrentThread;
     public WorkScope Process { get; }
+    public string? StartupWarning { get; }
 
-    private ThreadManager()
+    private ThreadManager(string[] args)
     {
+        var (cores, automatic) = PhysicalCore.Select(args, out string? warning);
+        StartupWarning = warning;
+        if (warning != null) { Console.Error.WriteLine($"Warning: {warning}"); }
+        workers = new CoreWorkers(cores, automatic);
         Process = CreateScope("Process");
     }
 
-    public static ThreadManager Initialize()
+    public static ThreadManager Initialize() => Initialize(Array.Empty<string>());
+
+    public static ThreadManager Initialize(string[] args)
     {
-        var manager = new ThreadManager();
+        var manager = new ThreadManager(args);
         if (Interlocked.CompareExchange(ref current, manager, null) != null)
         {
             manager.Dispose();
@@ -169,6 +177,7 @@ public sealed class ThreadManager : IDisposable
         {
             scope.FinishStop(pumpServices);
         }
+        workers.Dispose();
 
         while (true)
         {
@@ -241,10 +250,15 @@ public sealed class ThreadManager : IDisposable
             {
                 ObjectDisposedException.ThrowIf(stopCompletion != null, this);
                 var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var thread = new Thread(() =>
                 {
+                    Action? release = null;
                     try
                     {
+                        try { release = manager?.workers.EnterDedicated(); }
+                        catch (Exception error) { ready.SetException(error); return; }
+                        ready.SetResult();
                         action(Stopping);
                     }
                     catch (OperationCanceledException) when (Stopping.IsCancellationRequested)
@@ -253,6 +267,7 @@ public sealed class ThreadManager : IDisposable
                     }
                     finally
                     {
+                        release?.Invoke();
                         exited.SetResult();
                     }
                 }) { Name = name, IsBackground = background };
@@ -260,6 +275,7 @@ public sealed class ThreadManager : IDisposable
                 // Shutdown takes this same lock before collecting the work it must wait for.
                 thread.Start();
                 TrackLocked(exited.Task, exited.Task);
+                ready.Task.GetAwaiter().GetResult();
                 return thread;
             }
         }
@@ -307,7 +323,14 @@ public sealed class ThreadManager : IDisposable
             Schedule(name, () => completion.Task);
             try
             {
-                Parallel.For(start, end, new ParallelOptions { CancellationToken = Stopping }, action);
+                if (manager is null)
+                {
+                    Parallel.For(start, end, new ParallelOptions { CancellationToken = Stopping }, action);
+                }
+                else
+                {
+                    manager.workers.Run(start, end, action, Stopping);
+                }
             }
             finally
             {
