@@ -1173,6 +1173,7 @@ namespace Barotrauma.Networking
                 DebugConsole.ThrowError("Failed to write event error data", e);
             }
 
+            /* i suppose just do nothing?
             if (c.Connection == OwnerConnection)
             {
                 SendDirectChatMessage(errorStr, c, ChatMessageType.MessageBox);
@@ -1182,6 +1183,10 @@ namespace Barotrauma.Networking
             {
                 KickClient(c, errorStr);
             }
+            */
+
+            // Added to let them know what was happening
+            SendDirectChatMessage(errorStr, c, ChatMessageType.MessageBox);
         }
 
         private void WriteEventErrorData(Client client, string errorStr)
