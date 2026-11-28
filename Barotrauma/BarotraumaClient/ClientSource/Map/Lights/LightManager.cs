@@ -24,6 +24,8 @@ namespace Barotrauma.Lights
         const float ObstructLightsBehindCharactersZoomThreshold = 0.5f;
 
         private readonly Queue<RayCastTask> pendingRayCasts = new Queue<RayCastTask>();
+        // A light stays in this set from enqueue until the worker finishes its calculation.
+        private readonly HashSet<LightSource> scheduledRayCasts = new(ReferenceEqualityComparer.Instance);
 
         public static Entity ViewTarget { get; set; }
 
@@ -202,29 +204,37 @@ namespace Barotrauma.Lights
             }
         }
 
-        private static readonly object mutex = new object();
-
         public void AddRayCastTask(LightSource lightSource, Vector2 drawPos, float rotation)
         {
-            lock (mutex)
+            lock (pendingRayCasts)
             {
-                if (pendingRayCasts.Any(p => p.LightSource == lightSource)) { return; }
+                if (!scheduledRayCasts.Add(lightSource)) { return; }
                 pendingRayCasts.Enqueue(new RayCastTask(lightSource, drawPos, rotation));
             }
+        }
+
+        internal bool HasScheduledRayCast(LightSource lightSource)
+        {
+            lock (pendingRayCasts) { return scheduledRayCasts.Contains(lightSource); }
         }
 
         private void UpdateRayCasts(CancellationToken stopping)
         {
             while (!stopping.IsCancellationRequested)
             {
-                lock (mutex)
+                RayCastTask task;
+                lock (pendingRayCasts) { pendingRayCasts.TryDequeue(out task); }
+                if (task == null)
                 {
-                    while (!stopping.IsCancellationRequested && pendingRayCasts.TryDequeue(out RayCastTask task))
-                    {
-                        task.Calculate();
-                    }
+                    stopping.WaitHandle.WaitOne(10);
+                    continue;
                 }
-                stopping.WaitHandle.WaitOne(10);
+
+                try { task.Calculate(); }
+                finally
+                {
+                    lock (pendingRayCasts) { scheduledRayCasts.Remove(task.LightSource); }
+                }
             }
         }
 

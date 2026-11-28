@@ -279,7 +279,7 @@ namespace Barotrauma.Lights
             PendingVertexRecalculation,
         }
 
-        private LightVertexState state;
+        private volatile LightVertexState state;
 
         private Vector2 calculatedDrawPos;
 
@@ -1525,7 +1525,9 @@ namespace Barotrauma.Lights
                     recalculationCount++;
                     FindRaycastHits();
                 }
-                else if (state == LightVertexState.PendingVertexRecalculation)
+                // The worker sets the vertex state before releasing the light's queue entry.
+                // Consume the result after release so a follow-up request can be queued immediately.
+                else if (state == LightVertexState.PendingVertexRecalculation && !GameMain.LightManager.HasScheduledRayCast(this))
                 {
                     if (verts == null)
                     {
