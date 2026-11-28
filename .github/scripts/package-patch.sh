@@ -33,7 +33,7 @@ if [[ "$variant" == workshop ]]; then
   script_dir="$(dirname "${BASH_SOURCE[0]}")"
   files=(
     DedicatedServer.dll DedicatedServer.deps.json DedicatedServer.runtimeconfig.json
-    BarotraumaCore.dll Farseer.NetStandard.dll
+    BarotraumaCore.dll Farseer.NetStandard.dll System.Collections.Immutable.dll
     Publicized/BarotraumaCore.dll Publicized/DedicatedServer.dll
     Data/campaignsettings.xml Data/permissionpresets.xml
     HttpContent/index.html HttpContent/app.js HttpContent/management.js
@@ -77,6 +77,7 @@ files=(
   BarotraumaCore.dll BarotraumaCore.pdb
   Farseer.NetStandard.dll Farseer.NetStandard.pdb
   DedicatedServer.dll DedicatedServer.deps.json DedicatedServer.pdb
+  System.Collections.Immutable.dll
   HttpContent/index.html HttpContent/app.js HttpContent/performance.js HttpContent/styles.css
 )
 
